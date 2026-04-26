@@ -15,7 +15,13 @@ from app.services.limits import (
     get_plan_limits,
     plan_display_name,
 )
-from app.services.payments import build_stars_plan, calculate_expiry
+from app.services.payments import (
+    build_stars_plan,
+    calculate_expiry,
+    format_plan_expiry,
+    payment_success_text,
+    validate_stars_payload,
+)
 from app.services.users import ensure_user
 from app.storage.db import connect_db
 from app.storage.repositories import PaymentRepository, UserRepository
@@ -79,6 +85,47 @@ async def plan_request_handler(message: Message, bot: Bot) -> None:
         payment_repo = PaymentRepository(db)
 
         user_id = await ensure_user(user_repo, message.from_user)
+        user = await user_repo.get_by_telegram_id(message.from_user.id)
+
+        if user is None:
+            await message.answer(
+                "⚠️ <b>Не удалось найти профиль</b>\n\n"
+                "Нажми /start и попробуй оплатить снова.",
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+            )
+            return
+
+        current_plan = str(user["plan"] or "free").lower()
+        current_expires_at = user["plan_expires_at"]
+
+        if current_plan == "admin":
+            await message.answer(
+                "🛡 <b>Admin активен</b>\n\n"
+                "Оплата тебе не требуется: лимиты отключены, доступ полный.",
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+            )
+            return
+
+        if current_plan == selected_plan:
+            await message.answer(
+                f"♻️ <b>{stars_plan.title} уже активен</b>\n\n"
+                f"Действует до: <code>{format_plan_expiry(current_expires_at, current_plan)}</code>\n\n"
+                "Можно продлить тариф ещё на 30 дней. "
+                "После оплаты новая дата окончания будет рассчитана от текущей даты окончания подписки.",
+                parse_mode="HTML",
+            )
+
+        if current_plan == "business" and selected_plan == "pro":
+            await message.answer(
+                "🏢 <b>Business уже активен</b>\n\n"
+                "Pro покупать не нужно: Business выше по возможностям и лимитам.\n\n"
+                f"Действует до: <code>{format_plan_expiry(current_expires_at, current_plan)}</code>",
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+            )
+            return
 
         await payment_repo.create_payment(
             user_id=user_id,
@@ -117,15 +164,30 @@ async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery) -> None:
     settings = get_settings()
     payload = pre_checkout_query.invoice_payload
 
-    async with await connect_db(settings.database_path) as db:
-        payment = await PaymentRepository(db).get_by_payload(payload)
-
-    if payment is None:
+    if not validate_stars_payload(payload):
         await pre_checkout_query.answer(
             ok=False,
-            error_message="Платёж не найден. Попробуй создать счёт заново.",
+            error_message="Некорректный платёжный payload. Создай счёт заново.",
         )
         return
+
+    async with await connect_db(settings.database_path) as db:
+        payment_repo = PaymentRepository(db)
+        payment = await payment_repo.get_by_payload(payload)
+
+        if payment is None:
+            await pre_checkout_query.answer(
+                ok=False,
+                error_message="Платёж не найден. Попробуй создать счёт заново.",
+            )
+            return
+
+        if str(payment["status"]) == "paid":
+            await pre_checkout_query.answer(
+                ok=False,
+                error_message="Этот счёт уже оплачен. Создай новый счёт.",
+            )
+            return
 
     await pre_checkout_query.answer(ok=True)
 
@@ -135,6 +197,16 @@ async def successful_payment_handler(message: Message) -> None:
     settings = get_settings()
     successful_payment = message.successful_payment
     payload = successful_payment.invoice_payload
+
+    if not validate_stars_payload(payload):
+        logger.error("Invalid successful payment payload: %s", payload)
+        await message.answer(
+            "⚠️ <b>Оплата получена, но payload некорректный</b>\n\n"
+            "Напиши администратору. Платёж не потерян: Telegram сохранил charge id.",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+        return
 
     raw_payload = json.dumps(
         successful_payment.model_dump(mode="json"),
@@ -173,7 +245,13 @@ async def successful_payment_handler(message: Message) -> None:
             return
 
         plan = str(payment["plan"])
-        expires_at = calculate_expiry()
+        current_plan = str(user["plan"] or "free").lower()
+        current_expires_at = user["plan_expires_at"]
+
+        if current_plan == plan:
+            expires_at = calculate_expiry(current_expires_at=current_expires_at)
+        else:
+            expires_at = calculate_expiry()
 
         await user_repo.set_plan(
             telegram_id=message.from_user.id,
@@ -182,16 +260,7 @@ async def successful_payment_handler(message: Message) -> None:
         )
 
     await message.answer(
-        "✅ <b>Оплата прошла успешно</b>\n\n"
-        f"Тариф: <b>{plan_display_name(plan)}</b>\n"
-        f"Срок: <code>30 дней</code>\n"
-        f"Действует до: <code>{expires_at}</code>\n\n"
-        "<b>Что теперь доступно</b>\n"
-        "— больше запросов;\n"
-        "— больше голосовых;\n"
-        "— DOCX/PDF документы;\n"
-        "— комфортная работа с проектами.\n\n"
-        "Начни с нижнего меню: 🧠 Ассистент, 🗂 Проекты или 📄 Документы.",
+        payment_success_text(plan=plan, expires_at=expires_at),
         reply_markup=main_keyboard(),
         parse_mode="HTML",
     )

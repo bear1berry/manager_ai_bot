@@ -373,10 +373,42 @@ class PaymentRepository:
         )
         return await cursor.fetchone()
 
+    async def mark_rejected(self, payload: str, reason: str) -> None:
+        await self.db.execute(
+            """
+            UPDATE payments
+            SET status = 'rejected',
+                raw_payload = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE payload = ?
+            """,
+            (reason[:2000], payload),
+        )
+        await self.db.commit()
+
     async def get_by_payload(self, payload: str) -> aiosqlite.Row | None:
         cursor = await self.db.execute(
             "SELECT * FROM payments WHERE payload = ?",
             (payload,),
+        )
+        return await cursor.fetchone()
+
+    async def latest_created_for_user_plan(
+        self,
+        user_id: int,
+        plan: str,
+    ) -> aiosqlite.Row | None:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM payments
+            WHERE user_id = ?
+              AND plan = ?
+              AND status = 'created'
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (user_id, plan),
         )
         return await cursor.fetchone()
 
@@ -385,6 +417,7 @@ class PaymentRepository:
             "total": await self._count("SELECT COUNT(*) FROM payments"),
             "paid": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'paid'"),
             "created": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'created'"),
+            "rejected": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'rejected'"),
             "stars_paid": await self._count("SELECT COALESCE(SUM(stars_amount), 0) FROM payments WHERE status = 'paid'"),
             "paid_today": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'paid' AND DATE(updated_at) = DATE('now')"),
         }
@@ -531,6 +564,7 @@ class AdminRepository:
             "feedback_negative": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'negative'"),
             "payments_total": await self._count("SELECT COUNT(*) FROM payments"),
             "payments_paid": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'paid'"),
+            "payments_rejected": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'rejected'"),
             "stars_paid": await self._count("SELECT COALESCE(SUM(stars_amount), 0) FROM payments WHERE status = 'paid'"),
             "queue_pending": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'pending'"),
             "queue_processing": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'processing'"),

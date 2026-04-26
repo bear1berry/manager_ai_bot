@@ -83,6 +83,7 @@ async def stats_handler(message: Message) -> None:
         "⭐ <b>Telegram Stars</b>\n"
         f"— платежей всего: <code>{stats['payments_total']}</code>\n"
         f"— оплачено: <code>{stats['payments_paid']}</code>\n"
+        f"— отклонено: <code>{stats['payments_rejected']}</code>\n"
         f"— Stars получено: <code>{stats['stars_paid']}</code>\n\n"
         "🧵 <b>Очередь</b>\n"
         f"— pending: <code>{stats['queue_pending']}</code>\n"
@@ -268,18 +269,27 @@ async def payments_handler(message: Message) -> None:
         f"Всего: <code>{stats['total']}</code>",
         f"Оплачено: <code>{stats['paid']}</code>",
         f"Создано счетов: <code>{stats['created']}</code>",
+        f"Отклонено: <code>{stats['rejected']}</code>",
         f"Stars получено: <code>{stats['stars_paid']}</code>",
         f"Оплат сегодня: <code>{stats['paid_today']}</code>\n",
     ]
 
     for index, row in enumerate(rows, start=1):
         username = f"@{row['username']}" if row["username"] else "без username"
+        charge_id = str(row["telegram_payment_charge_id"] or "—")
+        payload = str(row["payload"] or "—")
+
+        if len(payload) > 48:
+            payload = payload[:48] + "…"
+
         lines.append(
             f"{index}. <b>{plan_display_name(row['plan'])}</b>\n"
             f"Пользователь: <code>{html.escape(username)}</code>\n"
             f"Telegram ID: <code>{row['telegram_id']}</code>\n"
             f"Stars: <code>{row['stars_amount']}</code>\n"
             f"Статус: <code>{row['status']}</code>\n"
+            f"Charge ID: <code>{html.escape(charge_id)}</code>\n"
+            f"Payload: <code>{html.escape(payload)}</code>\n"
             f"Дата: <code>{row['updated_at']}</code>\n"
         )
 

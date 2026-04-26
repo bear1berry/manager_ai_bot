@@ -57,11 +57,18 @@ async def profile_handler(message: Message) -> None:
     features = plan_features(plan)
     expires_text = format_plan_expiry(plan_expires_at, plan)
 
+    plan_note = ""
+    if plan == "admin":
+        plan_note = "\n🛡 <b>Admin</b>: оплата не требуется, лимиты отключены.\n"
+    elif plan in {"pro", "business"}:
+        plan_note = "\n♻️ Подписку можно продлить заранее. Новый срок прибавится к текущей дате окончания.\n"
+
     await message.answer(
         "👤 <b>Профиль</b>\n\n"
         f"Telegram ID: <code>{message.from_user.id}</code>\n"
         f"Тариф: <b>{plan_display_name(plan)}</b>\n"
-        f"Действует до: <code>{expires_text}</code>\n\n"
+        f"Действует до: <code>{expires_text}</code>\n"
+        f"{plan_note}\n"
         "📊 <b>Лимиты на сегодня</b>\n"
         f"{usage_line('Текст', text_used, limits.text_limit)}\n"
         f"{usage_line('Голосовые', voice_used, limits.voice_limit)}\n\n"
