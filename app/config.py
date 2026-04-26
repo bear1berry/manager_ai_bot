@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    bot_token: str = Field(..., alias="BOT_TOKEN")
+
+    admin_user_ids: str = Field(default="", alias="ADMIN_USER_IDS")
+
+    app_name: str = Field(default="Менеджер ИИ", alias="APP_NAME")
+    env: Literal["dev", "prod"] = Field(default="dev", alias="ENV")
+    timezone: str = Field(default="Europe/Moscow", alias="TIMEZONE")
+
+    database_path: str = Field(default="data/manager_ai.sqlite3", alias="DATABASE_PATH")
+    exports_dir: str = Field(default="exports", alias="EXPORTS_DIR")
+    logs_dir: str = Field(default="logs", alias="LOGS_DIR")
+
+    llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
+    llm_api_key: str = Field(default="", alias="LLM_API_KEY")
+    llm_model: str = Field(default="deepseek-chat", alias="LLM_MODEL")
+    llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
+
+    yandex_speechkit_api_key: str = Field(default="", alias="YANDEX_SPEECHKIT_API_KEY")
+    yandex_speechkit_folder_id: str = Field(default="", alias="YANDEX_SPEECHKIT_FOLDER_ID")
+    yandex_stt_language: str = Field(default="ru-RU", alias="YANDEX_STT_LANGUAGE")
+
+    free_daily_text_limit: int = Field(default=20, alias="FREE_DAILY_TEXT_LIMIT")
+    free_daily_voice_limit: int = Field(default=3, alias="FREE_DAILY_VOICE_LIMIT")
+
+    pro_daily_text_limit: int = Field(default=300, alias="PRO_DAILY_TEXT_LIMIT")
+    pro_daily_voice_limit: int = Field(default=50, alias="PRO_DAILY_VOICE_LIMIT")
+
+    business_daily_text_limit: int = Field(default=1000, alias="BUSINESS_DAILY_TEXT_LIMIT")
+    business_daily_voice_limit: int = Field(default=200, alias="BUSINESS_DAILY_VOICE_LIMIT")
+
+    max_export_file_mb: int = Field(default=45, alias="MAX_EXPORT_FILE_MB")
+    pdf_font_path: str = Field(default="", alias="PDF_FONT_PATH")
+
+    @property
+    def admin_ids(self) -> set[int]:
+        result: set[int] = set()
+        for raw in self.admin_user_ids.split(","):
+            raw = raw.strip()
+            if raw.isdigit():
+                result.add(int(raw))
+        return result
+
+    @property
+    def database_file(self) -> Path:
+        return Path(self.database_path)
+
+    @property
+    def exports_path(self) -> Path:
+        return Path(self.exports_dir)
+
+    @property
+    def logs_path(self) -> Path:
+        return Path(self.logs_dir)
+
+    @property
+    def max_export_file_bytes(self) -> int:
+        return self.max_export_file_mb * 1024 * 1024
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

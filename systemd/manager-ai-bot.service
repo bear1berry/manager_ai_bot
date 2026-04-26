@@ -1,0 +1,16 @@
+[Unit]
+Description=Manager AI Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/manager_ai_bot
+EnvironmentFile=/opt/manager_ai_bot/.env
+ExecStart=/opt/manager_ai_bot/.venv/bin/python -m app.main
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

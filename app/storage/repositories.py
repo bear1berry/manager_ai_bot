@@ -1,0 +1,237 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import aiosqlite
+import orjson
+
+
+class UserRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def upsert_user(
+        self,
+        telegram_id: int,
+        username: str | None,
+        first_name: str | None,
+        last_name: str | None,
+    ) -> aiosqlite.Row:
+        await self.db.execute(
+            '''
+            INSERT INTO users (telegram_id, username, first_name, last_name)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                last_name = excluded.last_name,
+                updated_at = CURRENT_TIMESTAMP
+            ''',
+            (telegram_id, username, first_name, last_name),
+        )
+        await self.db.commit()
+
+        cursor = await self.db.execute(
+            "SELECT * FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise RuntimeError("User upsert failed")
+        return row
+
+    async def get_by_telegram_id(self, telegram_id: int) -> aiosqlite.Row | None:
+        cursor = await self.db.execute(
+            "SELECT * FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        return await cursor.fetchone()
+
+    async def set_plan(self, telegram_id: int, plan: str) -> None:
+        await self.db.execute(
+            '''
+            UPDATE users
+            SET plan = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE telegram_id = ?
+            ''',
+            (plan, telegram_id),
+        )
+        await self.db.commit()
+
+
+class MessageRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def add(self, user_id: int, role: str, content: str) -> None:
+        await self.db.execute(
+            "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
+            (user_id, role, content),
+        )
+        await self.db.commit()
+
+    async def recent(self, user_id: int, limit: int = 12) -> list[dict[str, str]]:
+        cursor = await self.db.execute(
+            '''
+            SELECT role, content
+            FROM messages
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            ''',
+            (user_id, limit),
+        )
+        rows = await cursor.fetchall()
+        rows = list(reversed(rows))
+        return [{"role": row["role"], "content": row["content"]} for row in rows]
+
+
+class UsageRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def count_today(self, user_id: int, kind: str) -> int:
+        cursor = await self.db.execute(
+            '''
+            SELECT COUNT(*) AS cnt
+            FROM usage_events
+            WHERE user_id = ?
+              AND kind = ?
+              AND created_date = DATE('now')
+            ''',
+            (user_id, kind),
+        )
+        row = await cursor.fetchone()
+        return int(row["cnt"]) if row else 0
+
+    async def add(self, user_id: int, kind: str) -> None:
+        await self.db.execute(
+            "INSERT INTO usage_events (user_id, kind) VALUES (?, ?)",
+            (user_id, kind),
+        )
+        await self.db.commit()
+
+
+class ProjectRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def create(self, user_id: int, title: str, description: str = "") -> None:
+        await self.db.execute(
+            '''
+            INSERT INTO projects (user_id, title, description)
+            VALUES (?, ?, ?)
+            ''',
+            (user_id, title, description),
+        )
+        await self.db.commit()
+
+    async def list_active(self, user_id: int) -> list[aiosqlite.Row]:
+        cursor = await self.db.execute(
+            '''
+            SELECT *
+            FROM projects
+            WHERE user_id = ?
+              AND status = 'active'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 20
+            ''',
+            (user_id,),
+        )
+        return await cursor.fetchall()
+
+
+class QueueRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def enqueue(self, kind: str, payload: dict[str, Any], dedupe_key: str) -> int | None:
+        try:
+            cursor = await self.db.execute(
+                '''
+                INSERT INTO queue (kind, payload, dedupe_key)
+                VALUES (?, ?, ?)
+                ''',
+                (
+                    kind,
+                    orjson.dumps(payload).decode("utf-8"),
+                    dedupe_key,
+                ),
+            )
+            await self.db.commit()
+            return int(cursor.lastrowid)
+        except aiosqlite.IntegrityError:
+            return None
+
+    async def claim_next(self) -> aiosqlite.Row | None:
+        await self.db.execute("BEGIN IMMEDIATE")
+        cursor = await self.db.execute(
+            '''
+            SELECT *
+            FROM queue
+            WHERE status = 'pending'
+            ORDER BY id ASC
+            LIMIT 1
+            '''
+        )
+        row = await cursor.fetchone()
+
+        if row is None:
+            await self.db.commit()
+            return None
+
+        await self.db.execute(
+            '''
+            UPDATE queue
+            SET status = 'processing',
+                attempts = attempts + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND status = 'pending'
+            ''',
+            (row["id"],),
+        )
+        await self.db.commit()
+
+        cursor = await self.db.execute("SELECT * FROM queue WHERE id = ?", (row["id"],))
+        return await cursor.fetchone()
+
+    async def mark_done(self, queue_id: int) -> None:
+        await self.db.execute(
+            '''
+            UPDATE queue
+            SET status = 'done',
+                updated_at = CURRENT_TIMESTAMP,
+                last_error = NULL
+            WHERE id = ?
+            ''',
+            (queue_id,),
+        )
+        await self.db.commit()
+
+    async def mark_failed_or_retry(self, queue_id: int, error: str, max_attempts: int) -> None:
+        cursor = await self.db.execute(
+            "SELECT attempts FROM queue WHERE id = ?",
+            (queue_id,),
+        )
+        row = await cursor.fetchone()
+        attempts = int(row["attempts"]) if row else max_attempts
+
+        status = "failed" if attempts >= max_attempts else "pending"
+
+        await self.db.execute(
+            '''
+            UPDATE queue
+            SET status = ?,
+                updated_at = CURRENT_TIMESTAMP,
+                last_error = ?
+            WHERE id = ?
+            ''',
+            (status, error[:2000], queue_id),
+        )
+        await self.db.commit()
+
+    @staticmethod
+    def parse_payload(row: aiosqlite.Row) -> dict[str, Any]:
+        return json.loads(row["payload"])
