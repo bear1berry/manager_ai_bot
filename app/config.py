@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     logs_dir: str = Field(default="logs", alias="LOGS_DIR")
 
     mini_app_url: str = Field(default="", alias="MINI_APP_URL")
+    mini_app_api_enabled: bool = Field(default=True, alias="MINI_APP_API_ENABLED")
+    mini_app_api_host: str = Field(default="127.0.0.1", alias="MINI_APP_API_HOST")
+    mini_app_api_port: int = Field(default=8088, alias="MINI_APP_API_PORT")
+    mini_app_auth_required: bool = Field(default=True, alias="MINI_APP_AUTH_REQUIRED")
+    mini_app_cors_origins: str = Field(default="", alias="MINI_APP_CORS_ORIGINS")
 
     llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")

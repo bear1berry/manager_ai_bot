@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { loadMiniAppData, type MiniAppData } from "./api";
 
 type TelegramWebApp = {
   ready: () => void;
   expand: () => void;
   close: () => void;
-  MainButton: {
-    text: string;
-    show: () => void;
-    hide: () => void;
-    onClick: (callback: () => void) => void;
-    offClick: (callback: () => void) => void;
-  };
+  initData?: string;
   initDataUnsafe?: {
     user?: {
       id?: number;
@@ -19,7 +14,6 @@ type TelegramWebApp = {
       last_name?: string;
     };
   };
-  colorScheme?: "light" | "dark";
 };
 
 declare global {
@@ -40,6 +34,52 @@ const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
   { key: "demo", label: "Демо", icon: "◎" }
 ];
 
+const fallbackData: MiniAppData = {
+  ok: true,
+  demo: true,
+  user: {
+    telegram_id: 0,
+    username: "demo",
+    first_name: "Demo",
+    last_name: null
+  },
+  subscription: {
+    plan: "free",
+    plan_name: "Free",
+    expires_text: "—"
+  },
+  limits: {
+    text: { used: 3, limit: 20, remaining: 17 },
+    voice: { used: 1, limit: 3, remaining: 2 }
+  },
+  stats: {
+    projects_total: 2,
+    messages_total: 14,
+    documents_generated: 1,
+    feedback_total: 3,
+    payments_paid: 0,
+    stars_paid: 0
+  },
+  projects: [
+    {
+      id: 1,
+      title: "Запуск Telegram-бота",
+      description: "Mini App, подписка Stars, документы, проекты и первый запуск.",
+      status: "active",
+      created_at: "demo",
+      updated_at: "demo"
+    },
+    {
+      id: 2,
+      title: "Клиент Иванова",
+      description: "Бюджет, сроки, КП и следующий шаг.",
+      status: "active",
+      created_at: "demo",
+      updated_at: "demo"
+    }
+  ]
+};
+
 function getWebApp(): TelegramWebApp | undefined {
   return window.Telegram?.WebApp;
 }
@@ -49,31 +89,86 @@ function sendToBot(text: string) {
   window.location.href = `https://t.me/user_managerGPT_Bot?start=${encoded}`;
 }
 
+function formatLimit(value: number): string {
+  if (value >= 999999999) {
+    return "∞";
+  }
+
+  return String(value);
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("home");
+  const [data, setData] = useState<MiniAppData>(fallbackData);
+  const [loading, setLoading] = useState(true);
+  const [apiStatus, setApiStatus] = useState<"loading" | "live" | "demo" | "error">("loading");
 
   const webApp = useMemo(() => getWebApp(), []);
-  const user = webApp?.initDataUnsafe?.user;
-  const firstName = user?.first_name || "Александр";
+  const telegramUser = webApp?.initDataUnsafe?.user;
 
   useEffect(() => {
     webApp?.ready();
     webApp?.expand();
   }, [webApp]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const loaded = await loadMiniAppData(webApp?.initData || "");
+
+        if (cancelled) {
+          return;
+        }
+
+        if (loaded) {
+          setData(loaded);
+          setApiStatus(loaded.demo ? "demo" : "live");
+        } else {
+          setData({
+            ...fallbackData,
+            user: {
+              ...fallbackData.user,
+              first_name: telegramUser?.first_name || fallbackData.user.first_name,
+              username: telegramUser?.username || fallbackData.user.username
+            }
+          });
+          setApiStatus("demo");
+        }
+      } catch {
+        if (!cancelled) {
+          setApiStatus("error");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [telegramUser?.first_name, telegramUser?.username, webApp?.initData]);
+
+  const firstName = data.user.first_name || telegramUser?.first_name || "Александр";
+
   return (
     <main className="app-shell">
       <section className="hero-card">
         <div className="hero-topline">Telegram Mini App</div>
         <h1>Менеджер ИИ</h1>
-        <p>
-          Премиальный рабочий кабинет для проектов, документов, подписки и быстрых AI-сценариев.
-        </p>
+        <p>Премиальный рабочий кабинет для проектов, документов, подписки и быстрых AI-сценариев.</p>
 
         <div className="user-chip">
-          <span className="pulse" />
+          <span className={apiStatus === "live" ? "pulse" : "pulse muted-pulse"} />
           <span>{firstName}</span>
-          <span className="muted">· MVP кабинет</span>
+          <span className="muted">
+            · {apiStatus === "live" ? "real data" : apiStatus === "error" ? "API offline" : "demo"}
+          </span>
         </div>
       </section>
 
@@ -92,17 +187,19 @@ function App() {
       </nav>
 
       <section className="content-card">
-        {activeTab === "home" && <HomeScreen />}
-        {activeTab === "projects" && <ProjectsScreen />}
-        {activeTab === "docs" && <DocumentsScreen />}
-        {activeTab === "subscription" && <SubscriptionScreen />}
-        {activeTab === "demo" && <DemoScreen />}
+        {loading && <div className="loading">Загружаю данные кабинета…</div>}
+
+        {!loading && activeTab === "home" && <HomeScreen data={data} />}
+        {!loading && activeTab === "projects" && <ProjectsScreen data={data} />}
+        {!loading && activeTab === "docs" && <DocumentsScreen data={data} />}
+        {!loading && activeTab === "subscription" && <SubscriptionScreen data={data} />}
+        {!loading && activeTab === "demo" && <DemoScreen />}
       </section>
     </main>
   );
 }
 
-function HomeScreen() {
+function HomeScreen({ data }: { data: MiniAppData }) {
   return (
     <>
       <div className="section-heading">
@@ -111,9 +208,25 @@ function HomeScreen() {
       </div>
 
       <div className="metrics-grid">
-        <Metric title="Тариф" value="Free / Pro" caption="подключается через Stars" />
-        <Metric title="Проекты" value="Память" caption="клиенты, сроки, заметки" />
-        <Metric title="Документы" value="DOCX/PDF" caption="КП, планы, чек-листы" />
+        <Metric title="Тариф" value={data.subscription.plan_name} caption={`до ${data.subscription.expires_text}`} />
+        <Metric title="Проекты" value={String(data.stats.projects_total)} caption="активная память" />
+        <Metric title="Документы" value={String(data.stats.documents_generated)} caption="создано файлов" />
+      </div>
+
+      <div className="limit-card">
+        <h3>Лимиты сегодня</h3>
+        <div className="limit-row">
+          <span>Текст</span>
+          <strong>
+            {data.limits.text.used}/{formatLimit(data.limits.text.limit)}
+          </strong>
+        </div>
+        <div className="limit-row">
+          <span>Голосовые</span>
+          <strong>
+            {data.limits.voice.used}/{formatLimit(data.limits.voice.limit)}
+          </strong>
+        </div>
       </div>
 
       <div className="action-list">
@@ -134,7 +247,7 @@ function HomeScreen() {
   );
 }
 
-function ProjectsScreen() {
+function ProjectsScreen({ data }: { data: MiniAppData }) {
   return (
     <>
       <div className="section-heading">
@@ -142,14 +255,16 @@ function ProjectsScreen() {
         <h2>Проекты</h2>
       </div>
 
-      <p className="lead">
-        Проекты — это рабочая память: клиенты, сроки, бюджеты, договорённости и заметки.
-      </p>
+      <p className="lead">Проекты — это рабочая память: клиенты, сроки, бюджеты, договорённости и заметки.</p>
 
       <div className="feature-list">
-        <Feature title="Создать проект" text="Сохрани вводные по клиенту или задаче." />
-        <Feature title="Добавить заметку" text="Докинь новую договорённость без потери контекста." />
-        <Feature title="Спросить по проекту" text="Например: «Что у нас по Ивановой?»" />
+        {data.projects.length === 0 ? (
+          <Feature title="Проектов пока нет" text="Создай первый проект в боте — он появится здесь." />
+        ) : (
+          data.projects.map((project) => (
+            <Feature key={project.id} title={project.title} text={project.description || "Без описания"} />
+          ))
+        )}
       </div>
 
       <button className="primary-button" onClick={() => sendToBot("projects")} type="button">
@@ -159,7 +274,7 @@ function ProjectsScreen() {
   );
 }
 
-function DocumentsScreen() {
+function DocumentsScreen({ data }: { data: MiniAppData }) {
   return (
     <>
       <div className="section-heading">
@@ -168,7 +283,8 @@ function DocumentsScreen() {
       </div>
 
       <p className="lead">
-        Превращай сырые вводные в аккуратные документы: КП, план работ, резюме встречи или чек-лист.
+        Создано документов: <strong>{data.stats.documents_generated}</strong>. Следующий слой — история документов и
+        повторное скачивание.
       </p>
 
       <div className="document-grid">
@@ -185,7 +301,7 @@ function DocumentsScreen() {
   );
 }
 
-function SubscriptionScreen() {
+function SubscriptionScreen({ data }: { data: MiniAppData }) {
   return (
     <>
       <div className="section-heading">
@@ -194,15 +310,12 @@ function SubscriptionScreen() {
       </div>
 
       <p className="lead">
-        Оплата проходит через Telegram Stars. После оплаты тариф активируется автоматически.
+        Текущий тариф: <strong>{data.subscription.plan_name}</strong>. Действует до:{" "}
+        <strong>{data.subscription.expires_text}</strong>.
       </p>
 
       <div className="plans">
-        <Plan
-          title="Pro"
-          price="299 ⭐"
-          items={["больше запросов", "больше голосовых", "DOCX/PDF", "проекты"]}
-        />
+        <Plan title="Pro" price="299 ⭐" items={["больше запросов", "больше голосовых", "DOCX/PDF", "проекты"]} />
         <Plan
           title="Business"
           price="999 ⭐"
@@ -225,9 +338,7 @@ function DemoScreen() {
         <h2>Демо</h2>
       </div>
 
-      <p className="lead">
-        Быстрый маршрут для первого пользователя: понять, зачем нужен бот, без длинных инструкций.
-      </p>
+      <p className="lead">Быстрый маршрут для первого пользователя: понять, зачем нужен бот, без длинных инструкций.</p>
 
       <div className="feature-list">
         <Feature title="Разобрать хаос" text="Сырые мысли → структура, риски, следующий шаг." />

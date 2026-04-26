@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import signal
 from contextlib import suppress
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramNetworkError
 
+from app.api.miniapp import start_miniapp_api
 from app.bot.commands import setup_bot_commands
 from app.config import get_settings
 from app.routers import setup_routers
@@ -27,7 +29,7 @@ async def main() -> None:
     ensure_dir(settings.logs_path)
     ensure_dir("data")
 
-    setup_logging(settings.logs_dir)
+    setup_logging(settings.logs_path)
     await init_db(settings.database_path)
 
     bot = Bot(
@@ -35,47 +37,37 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    dp = Dispatcher()
-    dp.include_router(setup_routers())
+    dispatcher = Dispatcher()
+    dispatcher.include_router(setup_routers())
+
+    worker = QueueWorker(settings=settings, bot=bot)
+    worker_task: asyncio.Task | None = None
+    api_runner: web.AppRunner | None = None
 
     try:
-        await setup_bot_commands(bot)
-        logger.info("Bot commands installed")
-    except Exception:
-        logger.exception("Failed to set bot commands. Continue startup without commands.")
+        try:
+            await setup_bot_commands(bot)
+            logger.info("Bot commands installed")
+        except TelegramNetworkError:
+            logger.exception("Failed to set bot commands. Continue startup without commands.")
 
-    worker = QueueWorker(bot=bot, settings=settings)
-    worker_task = asyncio.create_task(worker.start())
+        api_runner = await start_miniapp_api(settings)
 
-    stop_event = asyncio.Event()
+        worker_task = asyncio.create_task(worker.run(), name="queue-worker")
 
-    def _stop() -> None:
-        logger.info("Stop signal received")
-        stop_event.set()
-
-    loop = asyncio.get_running_loop()
-
-    with suppress(NotImplementedError):
-        loop.add_signal_handler(signal.SIGINT, _stop)
-        loop.add_signal_handler(signal.SIGTERM, _stop)
-
-    try:
         logger.info("Bot polling started: %s", settings.app_name)
-        polling_task = asyncio.create_task(dp.start_polling(bot))
-        await stop_event.wait()
-        polling_task.cancel()
+        await dispatcher.start_polling(bot)
 
-        with suppress(asyncio.CancelledError):
-            await polling_task
     finally:
-        await worker.stop()
-        worker_task.cancel()
+        if worker_task is not None:
+            worker_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker_task
 
-        with suppress(asyncio.CancelledError):
-            await worker_task
+        if api_runner is not None:
+            await api_runner.cleanup()
 
         await bot.session.close()
-        logger.info("Bot stopped")
 
 
 if __name__ == "__main__":
