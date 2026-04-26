@@ -18,25 +18,26 @@ def _tariff_card(settings) -> str:
     business = get_plan_limits(settings, "business")
 
     return (
-        "💎 **Подписка**\n\n"
-        "**Free**\n"
-        f"— текст: `{free.text_limit}/день`;\n"
-        f"— голосовые: `{free.voice_limit}/день`;\n"
+        "💎 <b>Подписка</b>\n\n"
+        "Тарифы нужны не для красоты. Они разделяют демо-режим, ежедневную работу и бизнес-нагрузку.\n\n"
+        "🆓 <b>Free</b>\n"
+        f"— текст: <code>{free.text_limit}/день</code>;\n"
+        f"— голосовые: <code>{free.voice_limit}/день</code>;\n"
         "— базовый ассистент;\n"
         "— проекты и документы в MVP-режиме.\n\n"
-        "**Pro**\n"
-        f"— текст: `{pro.text_limit}/день`;\n"
-        f"— голосовые: `{pro.voice_limit}/день`;\n"
+        "💎 <b>Pro</b>\n"
+        f"— текст: <code>{pro.text_limit}/день</code>;\n"
+        f"— голосовые: <code>{pro.voice_limit}/день</code>;\n"
         "— DOCX/PDF документы;\n"
         "— больше проектной работы;\n"
         "— комфортный ежедневный режим.\n\n"
-        "**Business**\n"
-        f"— текст: `{business.text_limit}/день`;\n"
-        f"— голосовые: `{business.voice_limit}/день`;\n"
+        "🏢 <b>Business</b>\n"
+        f"— текст: <code>{business.text_limit}/день</code>;\n"
+        f"— голосовые: <code>{business.voice_limit}/день</code>;\n"
         "— максимальные лимиты MVP;\n"
         "— будущие бизнес-шаблоны;\n"
         "— база под командное использование.\n\n"
-        "**Admin**\n"
+        "🛡 <b>Admin</b>\n"
         "— без дневных ограничений;\n"
         "— полный доступ к MVP-функциям;\n"
         "— ручное управление тарифами.\n\n"
@@ -51,7 +52,7 @@ async def subscription_handler(message: Message) -> None:
     await message.answer(
         _tariff_card(settings),
         reply_markup=subscription_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -60,20 +61,19 @@ async def plan_request_handler(message: Message) -> None:
     selected = "Pro" if message.text == "💎 Pro" else "Business"
 
     await message.answer(
-        f"🧾 **Выбран тариф {selected}**\n\n"
+        f"🧾 <b>Выбран тариф {selected}</b>\n\n"
+        "<b>Что дальше</b>\n"
         "Платёжный модуль подключим отдельным слоем.\n\n"
-        "План интеграции:\n"
-        "1. Telegram Stars — быстрый старт внутри Telegram.\n"
-        "2. Crypto Bot — USDT/TON для гибкой оплаты.\n"
-        "3. YooKassa — если нужен классический платёжный контур.\n\n"
-        "Пока тариф можно активировать вручную через админ-команду:\n"
-        "`/setplan telegram_id pro`\n"
-        "или\n"
-        "`/setplan telegram_id business`\n\n"
-        "Админ-режим:\n"
-        "`/setplan telegram_id admin`",
+        "<b>План интеграции</b>\n"
+        "— Telegram Stars — быстрый старт внутри Telegram;\n"
+        "— Crypto Bot — USDT/TON для гибкой оплаты;\n"
+        "— YooKassa — классический платёжный контур.\n\n"
+        "<b>Временная ручная активация</b>\n"
+        "<code>/setplan telegram_id pro</code>\n"
+        "<code>/setplan telegram_id business</code>\n"
+        "<code>/setplan telegram_id admin</code>",
         reply_markup=main_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -82,18 +82,24 @@ async def admin_set_plan_handler(message: Message) -> None:
     settings = get_settings()
 
     if not settings.is_admin(telegram_id=message.from_user.id, username=message.from_user.username):
-        await message.answer("⛔ Команда доступна только администратору.")
+        await message.answer("⛔ <b>Команда доступна только администратору.</b>", parse_mode="HTML")
         return
 
     parts = message.text.split()
     if len(parts) != 3:
-        await message.answer("Формат: `/setplan telegram_id free|pro|business|admin`", parse_mode="Markdown")
+        await message.answer(
+            "Формат:\n<code>/setplan telegram_id free|pro|business|admin</code>",
+            parse_mode="HTML",
+        )
         return
 
     telegram_id_raw, plan = parts[1], parts[2].lower()
 
     if not telegram_id_raw.isdigit() or plan not in {"free", "pro", "business", "admin"}:
-        await message.answer("Формат: `/setplan telegram_id free|pro|business|admin`", parse_mode="Markdown")
+        await message.answer(
+            "Формат:\n<code>/setplan telegram_id free|pro|business|admin</code>",
+            parse_mode="HTML",
+        )
         return
 
     async with await connect_db(settings.database_path) as db:
@@ -102,15 +108,15 @@ async def admin_set_plan_handler(message: Message) -> None:
 
         if user is None:
             await message.answer(
-                "⚠️ Пользователь ещё не найден в базе.\n\n"
-                "Он должен хотя бы один раз нажать `/start` в боте.",
-                parse_mode="Markdown",
+                "⚠️ <b>Пользователь не найден</b>\n\n"
+                "Он должен хотя бы один раз нажать <code>/start</code> в боте.",
+                parse_mode="HTML",
             )
             return
 
         await user_repo.set_plan(int(telegram_id_raw), plan)
 
     await message.answer(
-        f"✅ Тариф пользователя `{telegram_id_raw}` изменён на **{plan_display_name(plan)}**.",
-        parse_mode="Markdown",
+        f"✅ Тариф пользователя <code>{telegram_id_raw}</code> изменён на <b>{plan_display_name(plan)}</b>.",
+        parse_mode="HTML",
     )

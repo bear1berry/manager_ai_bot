@@ -19,6 +19,10 @@ from app.storage.repositories import UsageRepository, UserRepository
 router = Router()
 
 
+def _html_features(features: list[str]) -> str:
+    return "\n".join(f"— {item};" for item in features)
+
+
 @router.message(Command("profile"))
 @router.message(lambda message: message.text == "👤 Профиль")
 async def profile_handler(message: Message) -> None:
@@ -46,21 +50,20 @@ async def profile_handler(message: Message) -> None:
     limits = get_plan_limits(settings=settings, plan=plan)
     features = plan_features(plan)
 
-    features_text = "\n".join(f"— {item};" for item in features)
-
     await message.answer(
-        "👤 **Профиль**\n\n"
-        f"Telegram ID: `{message.from_user.id}`\n"
-        f"Тариф: **{plan_display_name(plan)}**\n\n"
-        "📊 **Лимиты на сегодня**\n"
+        "👤 <b>Профиль</b>\n\n"
+        f"Telegram ID: <code>{message.from_user.id}</code>\n"
+        f"Тариф: <b>{plan_display_name(plan)}</b>\n\n"
+        "📊 <b>Лимиты на сегодня</b>\n"
         f"{usage_line('Текст', text_used, limits.text_limit)}\n"
         f"{usage_line('Голосовые', voice_used, limits.voice_limit)}\n\n"
-        "🧩 **Доступно сейчас**\n"
-        f"{features_text}\n\n"
+        "🧩 <b>Доступно сейчас</b>\n"
+        f"{_html_features(features)}\n\n"
         f"{next_plan_suggestion(plan)}\n\n"
-        "Платёжный слой подключим отдельно: Telegram Stars / Crypto Bot / YooKassa.",
+        "💳 <b>Платежи</b>\n"
+        "Платёжный слой подключим отдельным этапом: Telegram Stars, Crypto Bot или YooKassa.",
         reply_markup=subscription_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -72,6 +75,8 @@ async def limits_handler(message: Message) -> None:
 @router.message(lambda message: message.text == "🏠 Главное меню")
 async def profile_back_to_main_handler(message: Message) -> None:
     await message.answer(
-        "Главное меню. Работаем дальше.",
+        "🏠 <b>Главное меню</b>\n\n"
+        "Выбери раздел в нижнем меню или напиши задачу.",
         reply_markup=main_keyboard(),
+        parse_mode="HTML",
     )

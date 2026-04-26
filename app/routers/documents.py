@@ -36,16 +36,17 @@ DOC_TYPES = {
 async def documents_menu_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        "📄 **Документы**\n\n"
-        "Выбери, что нужно собрать из вводных:\n"
-        "— КП;\n"
+        "📄 <b>Документы</b>\n\n"
+        "Соберу из вводных аккуратный рабочий файл в DOCX/PDF.\n\n"
+        "<b>Что можно подготовить</b>\n"
+        "— коммерческое предложение;\n"
         "— план работ;\n"
         "— резюме встречи;\n"
         "— чек-лист.\n\n"
-        "Я подготовлю структуру, соберу DOCX и PDF. "
-        "Если LLM API не подключён — сработает безопасный демо-шаблон.",
+        "<b>Как пользоваться</b>\n"
+        "Выбери тип документа и отправь вводные одним сообщением. Можно писать сыро — я структурирую.",
         reply_markup=documents_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -56,20 +57,25 @@ async def choose_document_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(DocumentStates.waiting_source_text)
 
     await message.answer(
-        f"📄 **{title}**\n\n"
+        f"📄 <b>{title}</b>\n\n"
         "Отправь вводные одним сообщением.\n\n"
-        "Пример:\n"
-        "`КП на настройку рекламы для салона красоты. Бюджет 35 000 ₽. "
-        "Срок 14 дней. Цель — заявки из Telegram и VK.`",
+        "<b>Пример</b>\n"
+        "<code>КП на настройку рекламы для салона красоты. Бюджет 35 000 ₽. "
+        "Срок 14 дней. Цель — заявки из Telegram и VK.</code>\n\n"
+        "После этого я соберу структуру и отправлю файлы.",
         reply_markup=documents_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
 @router.message(DocumentStates.waiting_source_text)
 async def generate_document_handler(message: Message, state: FSMContext) -> None:
     if not message.text:
-        await message.answer("Нужны текстовые вводные для документа.")
+        await message.answer(
+            "⚠️ <b>Нужны текстовые вводные</b>\n\n"
+            "Отправь описание задачи одним сообщением.",
+            parse_mode="HTML",
+        )
         return
 
     settings = get_settings()
@@ -97,15 +103,19 @@ async def generate_document_handler(message: Message, state: FSMContext) -> None
             await message.answer(
                 limit_message(limit_result),
                 reply_markup=main_keyboard(),
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             return
 
         await usage_repo.add(user_id=user_id, kind="text")
 
     await message.answer(
-        "🧠 Собираю документ: анализирую вводные, формирую структуру и готовлю файлы.",
+        "🧠 <b>Собираю документ</b>\n\n"
+        "— анализирую вводные;\n"
+        "— формирую структуру;\n"
+        "— готовлю DOCX/PDF.",
         reply_markup=documents_keyboard(),
+        parse_mode="HTML",
     )
 
     try:
@@ -122,10 +132,10 @@ async def generate_document_handler(message: Message, state: FSMContext) -> None
         await state.clear()
 
         await message.answer(
-            "✅ **Документ собран**\n\n"
-            "Отправляю DOCX и PDF. Если PDF не пришёл — значит сработал безопасный fallback на DOCX.",
+            "✅ <b>Документ собран</b>\n\n"
+            "Отправляю файлы. Если PDF не пришёл — значит временно сработал fallback на DOCX.",
             reply_markup=main_keyboard(),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
         await message.answer_document(
@@ -143,12 +153,13 @@ async def generate_document_handler(message: Message, state: FSMContext) -> None
         logger.exception("Document generation failed")
         await state.clear()
         await message.answer(
-            "⚠️ **Не удалось собрать документ**\n\n"
-            "Что случилось: во время генерации произошла ошибка.\n\n"
-            "Что сделать:\n"
-            "1. Сократи вводные и попробуй ещё раз.\n"
-            "2. Проверь, подключён ли LLM API.\n"
-            "3. Если ошибка повторится — смотри логи приложения.",
+            "⚠️ <b>Не удалось собрать документ</b>\n\n"
+            "<b>Что случилось</b>\n"
+            "Во время генерации произошла ошибка.\n\n"
+            "<b>Что сделать</b>\n"
+            "— сократи вводные;\n"
+            "— попробуй ещё раз;\n"
+            "— если ошибка повторится, проверь логи приложения.",
             reply_markup=main_keyboard(),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
