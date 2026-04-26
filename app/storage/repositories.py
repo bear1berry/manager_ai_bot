@@ -64,12 +64,13 @@ class MessageRepository:
     def __init__(self, db: aiosqlite.Connection) -> None:
         self.db = db
 
-    async def add(self, user_id: int, role: str, content: str) -> None:
-        await self.db.execute(
+    async def add(self, user_id: int, role: str, content: str) -> int:
+        cursor = await self.db.execute(
             "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
             (user_id, role, content),
         )
         await self.db.commit()
+        return int(cursor.lastrowid)
 
     async def recent(self, user_id: int, limit: int = 12) -> list[dict[str, str]]:
         cursor = await self.db.execute(
@@ -85,6 +86,20 @@ class MessageRepository:
         rows = await cursor.fetchall()
         rows = list(reversed(rows))
         return [{"role": row["role"], "content": row["content"]} for row in rows]
+
+    async def latest_assistant_message(self, user_id: int) -> aiosqlite.Row | None:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM messages
+            WHERE user_id = ?
+              AND role = 'assistant'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        return await cursor.fetchone()
 
 
 class UsageRepository:
@@ -200,6 +215,96 @@ class ProjectRepository:
         await self.db.commit()
 
 
+class FeedbackRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def upsert_feedback(
+        self,
+        user_id: int,
+        message_id: int | None,
+        rating: str,
+        comment: str | None = None,
+    ) -> int:
+        cursor = await self.db.execute(
+            """
+            INSERT INTO feedback (user_id, message_id, rating, comment)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, message_id) DO UPDATE SET
+                rating = excluded.rating,
+                comment = COALESCE(excluded.comment, feedback.comment),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, message_id, rating, comment),
+        )
+        await self.db.commit()
+
+        if cursor.lastrowid:
+            return int(cursor.lastrowid)
+
+        cursor = await self.db.execute(
+            """
+            SELECT id
+            FROM feedback
+            WHERE user_id = ?
+              AND (
+                    message_id = ?
+                 OR (message_id IS NULL AND ? IS NULL)
+              )
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id, message_id, message_id),
+        )
+        row = await cursor.fetchone()
+        return int(row["id"]) if row else 0
+
+    async def add_comment(self, feedback_id: int, comment: str) -> None:
+        await self.db.execute(
+            """
+            UPDATE feedback
+            SET comment = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (comment.strip()[:2000], feedback_id),
+        )
+        await self.db.commit()
+
+    async def latest(self, limit: int = 10) -> list[aiosqlite.Row]:
+        cursor = await self.db.execute(
+            """
+            SELECT
+                feedback.*,
+                users.telegram_id,
+                users.username,
+                users.first_name,
+                users.last_name,
+                messages.content AS message_content
+            FROM feedback
+            JOIN users ON users.id = feedback.user_id
+            LEFT JOIN messages ON messages.id = feedback.message_id
+            ORDER BY feedback.updated_at DESC, feedback.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return await cursor.fetchall()
+
+    async def stats(self) -> dict[str, int]:
+        return {
+            "total": await self._count("SELECT COUNT(*) FROM feedback"),
+            "positive": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'positive'"),
+            "negative": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'negative'"),
+            "today": await self._count("SELECT COUNT(*) FROM feedback WHERE DATE(created_at) = DATE('now')"),
+        }
+
+    async def _count(self, sql: str) -> int:
+        cursor = await self.db.execute(sql)
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+
 class QueueRepository:
     def __init__(self, db: aiosqlite.Connection) -> None:
         self.db = db
@@ -313,6 +418,9 @@ class AdminRepository:
             ),
             "projects_total": await self._count("SELECT COUNT(*) FROM projects"),
             "projects_active": await self._count("SELECT COUNT(*) FROM projects WHERE status = 'active'"),
+            "feedback_total": await self._count("SELECT COUNT(*) FROM feedback"),
+            "feedback_positive": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'positive'"),
+            "feedback_negative": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'negative'"),
             "queue_pending": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'pending'"),
             "queue_processing": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'processing'"),
             "queue_done": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'done'"),

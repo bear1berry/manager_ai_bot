@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -8,7 +10,7 @@ from app.bot.keyboards import main_keyboard
 from app.config import get_settings
 from app.services.limits import plan_display_name
 from app.storage.db import connect_db
-from app.storage.repositories import AdminRepository, UserRepository
+from app.storage.repositories import AdminRepository, FeedbackRepository, UserRepository
 
 router = Router()
 
@@ -42,6 +44,7 @@ async def admin_panel_handler(message: Message) -> None:
         "— <code>/stats</code> — статистика продукта;\n"
         "— <code>/users</code> — последние пользователи;\n"
         "— <code>/queues</code> — состояние очереди;\n"
+        "— <code>/feedback</code> — последние оценки ответов;\n"
         "— <code>/setplan telegram_id free|pro|business|admin</code> — сменить тариф.\n\n"
         "Режим владельца нужен не для красоты, а чтобы видеть продукт как систему.",
         reply_markup=main_keyboard(),
@@ -71,6 +74,10 @@ async def stats_handler(message: Message) -> None:
         f"🎧 Голосовых сегодня: <code>{stats['voice_usage_today']}</code>\n\n"
         f"🗂 Проектов всего: <code>{stats['projects_total']}</code>\n"
         f"📄 Активных проектов: <code>{stats['projects_active']}</code>\n\n"
+        "👍 <b>Качество ответов</b>\n"
+        f"— всего оценок: <code>{stats['feedback_total']}</code>\n"
+        f"— полезно: <code>{stats['feedback_positive']}</code>\n"
+        f"— не то: <code>{stats['feedback_negative']}</code>\n\n"
         "🧵 <b>Очередь</b>\n"
         f"— pending: <code>{stats['queue_pending']}</code>\n"
         f"— processing: <code>{stats['queue_processing']}</code>\n"
@@ -111,9 +118,9 @@ async def users_handler(message: Message) -> None:
         ).strip() or "без имени"
 
         lines.append(
-            f"{index}. <b>{name}</b>\n"
+            f"{index}. <b>{html.escape(name)}</b>\n"
             f"ID: <code>{row['telegram_id']}</code>\n"
-            f"Username: <code>{username}</code>\n"
+            f"Username: <code>{html.escape(username)}</code>\n"
             f"Тариф: <b>{plan_display_name(row['plan'])}</b>\n"
             f"Создан: <code>{row['created_at']}</code>\n"
             f"Обновлён: <code>{row['updated_at']}</code>\n"
@@ -158,11 +165,68 @@ async def queues_handler(message: Message) -> None:
                 f"ID: <code>{row['id']}</code>\n"
                 f"Тип: <code>{row['kind']}</code>\n"
                 f"Попытки: <code>{row['attempts']}</code>\n"
-                f"Ошибка: <code>{error}</code>\n\n"
+                f"Ошибка: <code>{html.escape(error)}</code>\n\n"
             )
 
     await message.answer(
         text,
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("feedback"))
+async def feedback_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        feedback_repo = FeedbackRepository(db)
+        stats = await feedback_repo.stats()
+        rows = await feedback_repo.latest(limit=10)
+
+    if not rows:
+        await message.answer(
+            "👍 <b>Оценок пока нет</b>\n\n"
+            f"Всего: <code>{stats['total']}</code>",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    lines = [
+        "👍 <b>Обратная связь</b>\n",
+        f"Всего: <code>{stats['total']}</code>",
+        f"Полезно: <code>{stats['positive']}</code>",
+        f"Не то: <code>{stats['negative']}</code>",
+        f"Сегодня: <code>{stats['today']}</code>\n",
+    ]
+
+    for index, row in enumerate(rows, start=1):
+        username = f"@{row['username']}" if row["username"] else "без username"
+        rating = "👍 Полезно" if row["rating"] == "positive" else "👎 Не то"
+
+        comment = str(row["comment"] or "").strip()
+        if len(comment) > 250:
+            comment = comment[:250].rstrip() + "…"
+
+        message_content = str(row["message_content"] or "").strip()
+        if len(message_content) > 250:
+            message_content = message_content[:250].rstrip() + "…"
+
+        lines.append(
+            f"{index}. <b>{rating}</b>\n"
+            f"Пользователь: <code>{html.escape(username)}</code>\n"
+            f"Комментарий: <code>{html.escape(comment or '—')}</code>\n"
+            f"Ответ: <code>{html.escape(message_content or '—')}</code>\n"
+            f"Дата: <code>{row['updated_at']}</code>\n"
+        )
+
+    await message.answer(
+        "\n".join(lines),
         reply_markup=main_keyboard(),
         parse_mode="HTML",
     )

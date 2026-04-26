@@ -8,13 +8,11 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-
 PRAGMAS = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 PRAGMA busy_timeout=5000;
 """
-
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -34,19 +32,22 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_messages_user_id_created_at
+ON messages(user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS usage_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     kind TEXT NOT NULL,
-    created_date TEXT NOT NULL DEFAULT (DATE('now')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    created_date TEXT GENERATED ALWAYS AS (DATE(created_at)) STORED,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_usage_user_kind_date
+CREATE INDEX IF NOT EXISTS idx_usage_events_user_kind_date
 ON usage_events(user_id, kind, created_date);
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -57,11 +58,11 @@ CREATE TABLE IF NOT EXISTS projects (
     status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_projects_user_status
-ON projects(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_projects_user_status_updated
+ON projects(user_id, status, updated_at);
 
 CREATE TABLE IF NOT EXISTS queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,32 +79,28 @@ CREATE TABLE IF NOT EXISTS queue (
 CREATE INDEX IF NOT EXISTS idx_queue_status_id
 ON queue(status, id);
 
-CREATE TABLE IF NOT EXISTS subscriptions (
+CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
-    plan TEXT NOT NULL,
-    starts_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TEXT,
-    is_active INTEGER NOT NULL DEFAULT 1,
+    message_id INTEGER,
+    rating TEXT NOT NULL,
+    comment TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL,
+    UNIQUE(user_id, message_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_feedback_rating_created_at
+ON feedback(rating, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_user_created_at
+ON feedback(user_id, created_at);
 """
 
 
 class DatabaseContext:
-    """
-    Безопасный async context manager для aiosqlite.
-
-    Проект использует паттерн:
-
-        async with await connect_db(path) as db:
-            ...
-
-    Поэтому connect_db возвращает не готовое соединение,
-    а контекст, который открывает соединение внутри __aenter__.
-    """
-
     def __init__(self, database_path: str) -> None:
         self.database_path = database_path
         self.db: aiosqlite.Connection | None = None
@@ -115,7 +112,6 @@ class DatabaseContext:
         self.db = await aiosqlite.connect(db_file)
         self.db.row_factory = aiosqlite.Row
         await self.db.executescript(PRAGMAS)
-
         return self.db
 
     async def __aexit__(

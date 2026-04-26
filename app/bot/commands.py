@@ -17,6 +17,7 @@ async def setup_bot_commands(bot: Bot) -> None:
         BotCommand(command="projects", description="Проекты и рабочая память"),
         BotCommand(command="admin", description="Админ-панель"),
         BotCommand(command="stats", description="Статистика продукта"),
+        BotCommand(command="feedback", description="Оценки ответов"),
     ]
 
     await bot.set_my_commands(commands)

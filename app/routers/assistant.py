@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
-from app.bot.keyboards import assistant_keyboard, main_keyboard
+from app.bot.keyboards import assistant_keyboard, feedback_keyboard, main_keyboard
 from app.config import get_settings
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
@@ -81,6 +81,8 @@ MODE_BY_BUTTON = {
 
 SERVICE_BUTTONS = {
     "⬅️ Назад",
+    "👍 Полезно",
+    "👎 Не то",
     "📄 Документы",
     "🗂 Проекты",
     "👤 Профиль",
@@ -326,9 +328,13 @@ async def _process_text_request(
         if user:
             await MessageRepository(db).add(user_id=int(user["id"]), role="assistant", content=answer)
 
-    for chunk in split_long_text(answer):
+    chunks = split_long_text(answer)
+
+    for index, chunk in enumerate(chunks):
+        is_last = index == len(chunks) - 1
+
         await message.answer(
             telegram_html_from_ai_text(chunk),
-            reply_markup=main_keyboard(),
+            reply_markup=feedback_keyboard() if is_last else None,
             parse_mode="HTML",
         )

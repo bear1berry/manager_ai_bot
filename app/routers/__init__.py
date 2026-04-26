@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aiogram import Router
 
-from app.routers import admin, assistant, documents, profile, projects, start, subscription
+from app.routers import admin, assistant, documents, feedback, profile, projects, start, subscription
 
 
 def setup_routers() -> Router:
@@ -14,6 +14,7 @@ def setup_routers() -> Router:
     router.include_router(subscription.router)
     router.include_router(projects.router)
     router.include_router(documents.router)
+    router.include_router(feedback.router)
     router.include_router(assistant.router)
 
     return router

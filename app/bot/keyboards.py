@@ -39,6 +39,22 @@ def assistant_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def feedback_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="👍 Полезно"),
+                KeyboardButton(text="👎 Не то"),
+            ],
+            [
+                KeyboardButton(text="⬅️ Назад"),
+            ],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Оцени последний ответ",
+    )
+
+
 def documents_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
