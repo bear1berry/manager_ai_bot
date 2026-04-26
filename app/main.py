@@ -38,7 +38,11 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(setup_routers())
 
-    await setup_bot_commands(bot)
+    try:
+        await setup_bot_commands(bot)
+        logger.info("Bot commands installed")
+    except Exception:
+        logger.exception("Failed to set bot commands. Continue startup without commands.")
 
     worker = QueueWorker(bot=bot, settings=settings)
     worker_task = asyncio.create_task(worker.start())
