@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     bot_token: str = Field(..., alias="BOT_TOKEN")
 
     admin_user_ids: str = Field(default="", alias="ADMIN_USER_IDS")
+    admin_usernames: str = Field(default="bear1berry", alias="ADMIN_USERNAMES")
 
     app_name: str = Field(default="Менеджер ИИ", alias="APP_NAME")
     env: Literal["dev", "prod"] = Field(default="dev", alias="ENV")
@@ -56,6 +57,22 @@ class Settings(BaseSettings):
             if raw.isdigit():
                 result.add(int(raw))
         return result
+
+    @property
+    def admin_names(self) -> set[str]:
+        result: set[str] = set()
+        for raw in self.admin_usernames.split(","):
+            cleaned = raw.strip().lstrip("@").lower()
+            if cleaned:
+                result.add(cleaned)
+        return result
+
+    def is_admin(self, telegram_id: int | None, username: str | None) -> bool:
+        if telegram_id is not None and telegram_id in self.admin_ids:
+            return True
+
+        cleaned_username = (username or "").strip().lstrip("@").lower()
+        return bool(cleaned_username and cleaned_username in self.admin_names)
 
     @property
     def database_file(self) -> Path:
