@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT,
     last_name TEXT,
     plan TEXT NOT NULL DEFAULT 'free',
+    plan_expires_at TEXT,
+    plan_updated_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -97,6 +99,27 @@ ON feedback(rating, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_feedback_user_created_at
 ON feedback(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    telegram_payment_charge_id TEXT,
+    provider_payment_charge_id TEXT,
+    plan TEXT NOT NULL,
+    stars_amount INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'created',
+    payload TEXT NOT NULL UNIQUE,
+    raw_payload TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_payments_user_created_at
+ON payments(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_payments_status_created_at
+ON payments(status, created_at);
 """
 
 
@@ -125,6 +148,22 @@ class DatabaseContext:
             self.db = None
 
 
+async def _column_exists(db: aiosqlite.Connection, table: str, column: str) -> bool:
+    cursor = await db.execute(f"PRAGMA table_info({table})")
+    rows = await cursor.fetchall()
+    return any(str(row[1]) == column for row in rows)
+
+
+async def _run_migrations(db: aiosqlite.Connection) -> None:
+    if not await _column_exists(db, "users", "plan_expires_at"):
+        await db.execute("ALTER TABLE users ADD COLUMN plan_expires_at TEXT")
+
+    if not await _column_exists(db, "users", "plan_updated_at"):
+        await db.execute("ALTER TABLE users ADD COLUMN plan_updated_at TEXT")
+
+    await db.commit()
+
+
 async def init_db(database_path: str) -> None:
     db_file = Path(database_path)
     db_file.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +172,7 @@ async def init_db(database_path: str) -> None:
         db.row_factory = aiosqlite.Row
         await db.executescript(PRAGMAS)
         await db.executescript(SCHEMA)
+        await _run_migrations(db)
         await db.commit()
 
     logger.info("Database initialized: %s", db_file)

@@ -9,8 +9,9 @@ from aiogram.types import Message
 from app.bot.keyboards import main_keyboard
 from app.config import get_settings
 from app.services.limits import plan_display_name
+from app.services.payments import format_plan_expiry
 from app.storage.db import connect_db
-from app.storage.repositories import AdminRepository, FeedbackRepository, UserRepository
+from app.storage.repositories import AdminRepository, FeedbackRepository, PaymentRepository, UserRepository
 
 router = Router()
 
@@ -45,8 +46,9 @@ async def admin_panel_handler(message: Message) -> None:
         "— <code>/users</code> — последние пользователи;\n"
         "— <code>/queues</code> — состояние очереди;\n"
         "— <code>/feedback</code> — последние оценки ответов;\n"
-        "— <code>/setplan telegram_id free|pro|business|admin</code> — сменить тариф.\n\n"
-        "Режим владельца нужен не для красоты, а чтобы видеть продукт как систему.",
+        "— <code>/payments</code> — последние платежи Stars;\n"
+        "— <code>/setplan telegram_id free|pro|business|admin [days]</code> — сменить тариф.\n\n"
+        "Режим владельца нужен, чтобы видеть продукт как систему.",
         reply_markup=main_keyboard(),
         parse_mode="HTML",
     )
@@ -78,6 +80,10 @@ async def stats_handler(message: Message) -> None:
         f"— всего оценок: <code>{stats['feedback_total']}</code>\n"
         f"— полезно: <code>{stats['feedback_positive']}</code>\n"
         f"— не то: <code>{stats['feedback_negative']}</code>\n\n"
+        "⭐ <b>Telegram Stars</b>\n"
+        f"— платежей всего: <code>{stats['payments_total']}</code>\n"
+        f"— оплачено: <code>{stats['payments_paid']}</code>\n"
+        f"— Stars получено: <code>{stats['stars_paid']}</code>\n\n"
         "🧵 <b>Очередь</b>\n"
         f"— pending: <code>{stats['queue_pending']}</code>\n"
         f"— processing: <code>{stats['queue_processing']}</code>\n"
@@ -117,11 +123,14 @@ async def users_handler(message: Message) -> None:
             if part
         ).strip() or "без имени"
 
+        expires_text = format_plan_expiry(row["plan_expires_at"], row["plan"])
+
         lines.append(
             f"{index}. <b>{html.escape(name)}</b>\n"
             f"ID: <code>{row['telegram_id']}</code>\n"
             f"Username: <code>{html.escape(username)}</code>\n"
             f"Тариф: <b>{plan_display_name(row['plan'])}</b>\n"
+            f"Действует до: <code>{expires_text}</code>\n"
             f"Создан: <code>{row['created_at']}</code>\n"
             f"Обновлён: <code>{row['updated_at']}</code>\n"
         )
@@ -232,51 +241,50 @@ async def feedback_handler(message: Message) -> None:
     )
 
 
-@router.message(lambda message: message.text and message.text.startswith("/setplan "))
-async def admin_set_plan_handler(message: Message) -> None:
+@router.message(Command("payments"))
+async def payments_handler(message: Message) -> None:
     if not _is_admin_message(message):
         await _deny(message)
         return
 
     settings = get_settings()
 
-    parts = message.text.split()
-    if len(parts) != 3:
-        await message.answer(
-            "Формат:\n"
-            "<code>/setplan telegram_id free|pro|business|admin</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    telegram_id_raw, plan = parts[1], parts[2].lower()
-
-    if not telegram_id_raw.isdigit() or plan not in {"free", "pro", "business", "admin"}:
-        await message.answer(
-            "Формат:\n"
-            "<code>/setplan telegram_id free|pro|business|admin</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    telegram_id = int(telegram_id_raw)
-
     async with await connect_db(settings.database_path) as db:
-        user_repo = UserRepository(db)
-        user = await user_repo.get_by_telegram_id(telegram_id)
+        payment_repo = PaymentRepository(db)
+        stats = await payment_repo.stats()
+        rows = await payment_repo.latest(limit=10)
 
-        if user is None:
-            await message.answer(
-                "⚠️ <b>Пользователь не найден</b>\n\n"
-                "Он должен хотя бы один раз нажать <code>/start</code> в боте.",
-                parse_mode="HTML",
-            )
-            return
+    if not rows:
+        await message.answer(
+            "⭐ <b>Платежей пока нет</b>\n\n"
+            f"Всего: <code>{stats['total']}</code>",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+        return
 
-        await user_repo.set_plan(telegram_id, plan)
+    lines = [
+        "⭐ <b>Платежи Telegram Stars</b>\n",
+        f"Всего: <code>{stats['total']}</code>",
+        f"Оплачено: <code>{stats['paid']}</code>",
+        f"Создано счетов: <code>{stats['created']}</code>",
+        f"Stars получено: <code>{stats['stars_paid']}</code>",
+        f"Оплат сегодня: <code>{stats['paid_today']}</code>\n",
+    ]
+
+    for index, row in enumerate(rows, start=1):
+        username = f"@{row['username']}" if row["username"] else "без username"
+        lines.append(
+            f"{index}. <b>{plan_display_name(row['plan'])}</b>\n"
+            f"Пользователь: <code>{html.escape(username)}</code>\n"
+            f"Telegram ID: <code>{row['telegram_id']}</code>\n"
+            f"Stars: <code>{row['stars_amount']}</code>\n"
+            f"Статус: <code>{row['status']}</code>\n"
+            f"Дата: <code>{row['updated_at']}</code>\n"
+        )
 
     await message.answer(
-        f"✅ Тариф пользователя <code>{telegram_id}</code> изменён на <b>{plan_display_name(plan)}</b>.",
+        "\n".join(lines),
         reply_markup=main_keyboard(),
         parse_mode="HTML",
     )

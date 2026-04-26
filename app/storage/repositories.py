@@ -48,16 +48,31 @@ class UserRepository:
         )
         return await cursor.fetchone()
 
-    async def set_plan(self, telegram_id: int, plan: str) -> None:
+    async def set_plan(
+        self,
+        telegram_id: int,
+        plan: str,
+        plan_expires_at: str | None = None,
+    ) -> None:
         await self.db.execute(
             """
             UPDATE users
-            SET plan = ?, updated_at = CURRENT_TIMESTAMP
+            SET plan = ?,
+                plan_expires_at = ?,
+                plan_updated_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
             WHERE telegram_id = ?
             """,
-            (plan, telegram_id),
+            (plan, plan_expires_at, telegram_id),
         )
         await self.db.commit()
+
+    async def downgrade_to_free(self, telegram_id: int) -> None:
+        await self.set_plan(
+            telegram_id=telegram_id,
+            plan="free",
+            plan_expires_at=None,
+        )
 
 
 class MessageRepository:
@@ -305,6 +320,99 @@ class FeedbackRepository:
         return int(row[0]) if row else 0
 
 
+class PaymentRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def create_payment(
+        self,
+        user_id: int,
+        plan: str,
+        stars_amount: int,
+        payload: str,
+    ) -> int:
+        cursor = await self.db.execute(
+            """
+            INSERT INTO payments (user_id, plan, stars_amount, payload, status)
+            VALUES (?, ?, ?, ?, 'created')
+            """,
+            (user_id, plan, stars_amount, payload),
+        )
+        await self.db.commit()
+        return int(cursor.lastrowid)
+
+    async def mark_paid(
+        self,
+        payload: str,
+        telegram_payment_charge_id: str | None,
+        provider_payment_charge_id: str | None,
+        raw_payload: str,
+    ) -> aiosqlite.Row | None:
+        await self.db.execute(
+            """
+            UPDATE payments
+            SET status = 'paid',
+                telegram_payment_charge_id = ?,
+                provider_payment_charge_id = ?,
+                raw_payload = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE payload = ?
+            """,
+            (
+                telegram_payment_charge_id,
+                provider_payment_charge_id,
+                raw_payload,
+                payload,
+            ),
+        )
+        await self.db.commit()
+
+        cursor = await self.db.execute(
+            "SELECT * FROM payments WHERE payload = ?",
+            (payload,),
+        )
+        return await cursor.fetchone()
+
+    async def get_by_payload(self, payload: str) -> aiosqlite.Row | None:
+        cursor = await self.db.execute(
+            "SELECT * FROM payments WHERE payload = ?",
+            (payload,),
+        )
+        return await cursor.fetchone()
+
+    async def stats(self) -> dict[str, int]:
+        return {
+            "total": await self._count("SELECT COUNT(*) FROM payments"),
+            "paid": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'paid'"),
+            "created": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'created'"),
+            "stars_paid": await self._count("SELECT COALESCE(SUM(stars_amount), 0) FROM payments WHERE status = 'paid'"),
+            "paid_today": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'paid' AND DATE(updated_at) = DATE('now')"),
+        }
+
+    async def latest(self, limit: int = 10) -> list[aiosqlite.Row]:
+        cursor = await self.db.execute(
+            """
+            SELECT
+                payments.*,
+                users.telegram_id,
+                users.username,
+                users.first_name,
+                users.last_name
+            FROM payments
+            JOIN users ON users.id = payments.user_id
+            ORDER BY payments.updated_at DESC, payments.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return await cursor.fetchall()
+
+    async def _count(self, sql: str) -> int:
+        cursor = await self.db.execute(sql)
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+
 class QueueRepository:
     def __init__(self, db: aiosqlite.Connection) -> None:
         self.db = db
@@ -421,6 +529,9 @@ class AdminRepository:
             "feedback_total": await self._count("SELECT COUNT(*) FROM feedback"),
             "feedback_positive": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'positive'"),
             "feedback_negative": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'negative'"),
+            "payments_total": await self._count("SELECT COUNT(*) FROM payments"),
+            "payments_paid": await self._count("SELECT COUNT(*) FROM payments WHERE status = 'paid'"),
+            "stars_paid": await self._count("SELECT COALESCE(SUM(stars_amount), 0) FROM payments WHERE status = 'paid'"),
             "queue_pending": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'pending'"),
             "queue_processing": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'processing'"),
             "queue_done": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'done'"),
