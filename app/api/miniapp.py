@@ -151,7 +151,8 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
             "SELECT COALESCE(SUM(stars_amount), 0) FROM payments WHERE user_id = ? AND status = 'paid'",
             (user_id,),
         )
-        latest_projects = await _latest_projects(db, user_id=user_id, limit=5)
+
+        latest_projects = await _latest_projects(db, user_id=user_id, limit=8)
 
     payload = {
         "ok": True,
@@ -188,6 +189,7 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
             "stars_paid": stars_paid,
         },
         "projects": latest_projects,
+        "latest_projects": latest_projects,
     }
 
     return _json_response(payload, settings=settings)
@@ -217,6 +219,58 @@ async def _count_scalar(db, sql: str, params: tuple[Any, ...] = ()) -> int:
     return int(row[0] or 0)
 
 
+def _format_project_date(value: str | None) -> str:
+    if not value:
+        return "—"
+
+    # SQLite CURRENT_TIMESTAMP usually returns YYYY-MM-DD HH:MM:SS.
+    try:
+        date_part = value.split(" ")[0]
+        year, month, day = date_part.split("-")
+        return f"{day}.{month}.{year}"
+    except Exception:
+        return value
+
+
+def _project_summary(description: str) -> str:
+    cleaned = " ".join(description.strip().split())
+
+    if not cleaned:
+        return "Описание пока не добавлено. Можно докинуть заметку в проект через бота."
+
+    if len(cleaned) > 220:
+        return cleaned[:220].rstrip() + "…"
+
+    return cleaned
+
+
+def _last_note_preview(description: str) -> str:
+    cleaned = description.strip()
+    if not cleaned:
+        return ""
+
+    marker = "Заметка:"
+    if marker in cleaned:
+        last_note = cleaned.split(marker)[-1].strip()
+        last_note = " ".join(last_note.split())
+        if len(last_note) > 160:
+            return last_note[:160].rstrip() + "…"
+        return last_note
+
+    preview = " ".join(cleaned.split())
+    if len(preview) > 160:
+        return preview[:160].rstrip() + "…"
+
+    return preview
+
+
+def _notes_count(description: str) -> int:
+    if not description:
+        return 0
+
+    return description.count("Заметка:")
+
+
 async def _latest_projects(db, user_id: int, limit: int) -> list[dict[str, Any]]:
     cursor = await db.execute(
         """
@@ -233,18 +287,19 @@ async def _latest_projects(db, user_id: int, limit: int) -> list[dict[str, Any]]
 
     result: list[dict[str, Any]] = []
     for row in rows:
-        description = str(row["description"] or "").strip()
-        if len(description) > 180:
-            description = description[:180].rstrip() + "…"
-
+        description = str(row["description"] or "")
         result.append(
             {
                 "id": int(row["id"]),
                 "title": str(row["title"]),
-                "description": description,
+                "description": _project_summary(description),
                 "status": str(row["status"]),
+                "status_label": "Активен" if str(row["status"]) == "active" else str(row["status"]),
+                "notes_count": _notes_count(description),
+                "last_note_preview": _last_note_preview(description),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
+                "updated_text": _format_project_date(row["updated_at"]),
             }
         )
 
@@ -252,6 +307,33 @@ async def _latest_projects(db, user_id: int, limit: int) -> list[dict[str, Any]]
 
 
 def _demo_payload() -> dict[str, Any]:
+    projects = [
+        {
+            "id": 1,
+            "title": "Запуск Telegram-бота",
+            "description": "Mini App, подписка Stars, документы, проекты, HTTPS API и подготовка к первым пользователям.",
+            "status": "active",
+            "status_label": "Активен",
+            "notes_count": 3,
+            "last_note_preview": "Следующий шаг — карточки проектов и история документов.",
+            "created_at": "demo",
+            "updated_at": "demo",
+            "updated_text": "сегодня",
+        },
+        {
+            "id": 2,
+            "title": "Клиент Иванова",
+            "description": "Бюджет 450 000 ₽, дедлайн 20 мая, нужно подготовить КП и не выйти за бюджет.",
+            "status": "active",
+            "status_label": "Активен",
+            "notes_count": 1,
+            "last_note_preview": "Клиент просит показать поэтапный план работ.",
+            "created_at": "demo",
+            "updated_at": "demo",
+            "updated_text": "вчера",
+        },
+    ]
+
     return {
         "ok": True,
         "demo": True,
@@ -287,24 +369,8 @@ def _demo_payload() -> dict[str, Any]:
             "payments_paid": 0,
             "stars_paid": 0,
         },
-        "projects": [
-            {
-                "id": 1,
-                "title": "Запуск Telegram-бота",
-                "description": "Mini App, подписка Stars, документы, проекты и первый запуск.",
-                "status": "active",
-                "created_at": "demo",
-                "updated_at": "demo",
-            },
-            {
-                "id": 2,
-                "title": "Клиент Иванова",
-                "description": "Бюджет, сроки, КП и следующий шаг.",
-                "status": "active",
-                "created_at": "demo",
-                "updated_at": "demo",
-            },
-        ],
+        "projects": projects,
+        "latest_projects": projects,
     }
 
 

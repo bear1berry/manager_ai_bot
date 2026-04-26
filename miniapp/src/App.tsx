@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { loadMiniAppData, type MiniAppData } from "./api";
+import { loadMiniAppData, type MiniAppData, type MiniAppProject } from "./api";
 
 type TelegramWebApp = {
   ready: () => void;
@@ -64,18 +64,26 @@ const fallbackData: MiniAppData = {
     {
       id: 1,
       title: "Запуск Telegram-бота",
-      description: "Mini App, подписка Stars, документы, проекты и первый запуск.",
+      description: "Mini App, подписка Stars, документы, проекты, HTTPS API и подготовка к первым пользователям.",
       status: "active",
+      status_label: "Активен",
+      notes_count: 3,
+      last_note_preview: "Следующий шаг — карточки проектов и история документов.",
       created_at: "demo",
-      updated_at: "demo"
+      updated_at: "demo",
+      updated_text: "сегодня"
     },
     {
       id: 2,
       title: "Клиент Иванова",
-      description: "Бюджет, сроки, КП и следующий шаг.",
+      description: "Бюджет 450 000 ₽, дедлайн 20 мая, нужно подготовить КП и не выйти за бюджет.",
       status: "active",
+      status_label: "Активен",
+      notes_count: 1,
+      last_note_preview: "Клиент просит показать поэтапный план работ.",
       created_at: "demo",
-      updated_at: "demo"
+      updated_at: "demo",
+      updated_text: "вчера"
     }
   ]
 };
@@ -248,6 +256,8 @@ function HomeScreen({ data }: { data: MiniAppData }) {
 }
 
 function ProjectsScreen({ data }: { data: MiniAppData }) {
+  const projects = data.latest_projects || data.projects || [];
+
   return (
     <>
       <div className="section-heading">
@@ -255,21 +265,33 @@ function ProjectsScreen({ data }: { data: MiniAppData }) {
         <h2>Проекты</h2>
       </div>
 
-      <p className="lead">Проекты — это рабочая память: клиенты, сроки, бюджеты, договорённости и заметки.</p>
+      <p className="lead">
+        Рабочая память: клиенты, сроки, бюджеты, договорённости и следующий шаг.
+      </p>
 
-      <div className="feature-list">
-        {data.projects.length === 0 ? (
-          <Feature title="Проектов пока нет" text="Создай первый проект в боте — он появится здесь." />
-        ) : (
-          data.projects.map((project) => (
-            <Feature key={project.id} title={project.title} text={project.description || "Без описания"} />
-          ))
-        )}
+      <div className="project-actions">
+        <button type="button" onClick={() => sendToBot("projects")}>
+          Открыть проекты
+        </button>
+        <button type="button" onClick={() => sendToBot("new_project")}>
+          Создать проект
+        </button>
       </div>
 
-      <button className="primary-button" onClick={() => sendToBot("projects")} type="button">
-        Открыть проекты в боте
-      </button>
+      {projects.length === 0 ? (
+        <EmptyState
+          title="Проектов пока нет"
+          text="Создай первый проект в боте. После этого он появится здесь карточкой."
+          button="Создать проект"
+          onClick={() => sendToBot("new_project")}
+        />
+      ) : (
+        <div className="project-grid">
+          {projects.map((project) => (
+            <ProjectCard key={project.id} project={project} />
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -350,6 +372,70 @@ function DemoScreen() {
         Запустить демо
       </button>
     </>
+  );
+}
+
+function ProjectCard({ project }: { project: MiniAppProject }) {
+  const notesCount = project.notes_count || 0;
+  const updatedText = project.updated_text || project.updated_at || "—";
+  const lastNote = project.last_note_preview || "";
+
+  return (
+    <article className="project-card">
+      <div className="project-card-header">
+        <div>
+          <div className="project-status">{project.status_label || project.status || "Проект"}</div>
+          <h3>{project.title}</h3>
+        </div>
+        <span className="project-date">{updatedText}</span>
+      </div>
+
+      <p>{project.description}</p>
+
+      {lastNote && (
+        <div className="project-note">
+          <span>Последняя заметка</span>
+          <strong>{lastNote}</strong>
+        </div>
+      )}
+
+      <div className="project-meta">
+        <span>{notesCount} заметок</span>
+        <span>ID #{project.id}</span>
+      </div>
+
+      <div className="project-card-actions">
+        <button type="button" onClick={() => sendToBot(`project_${project.id}`)}>
+          Открыть
+        </button>
+        <button type="button" onClick={() => sendToBot("documents")}>
+          Документ
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function EmptyState({
+  title,
+  text,
+  button,
+  onClick
+}: {
+  title: string;
+  text: string;
+  button: string;
+  onClick: () => void;
+}) {
+  return (
+    <article className="empty-state">
+      <div className="empty-icon">◌</div>
+      <h3>{title}</h3>
+      <p>{text}</p>
+      <button type="button" onClick={onClick}>
+        {button}
+      </button>
+    </article>
   );
 }
 

@@ -3,8 +3,12 @@ export type MiniAppProject = {
   title: string;
   description: string;
   status: string;
+  status_label?: string;
+  notes_count?: number;
+  last_note_preview?: string;
   created_at: string;
   updated_at: string;
+  updated_text?: string;
 };
 
 export type MiniAppData = {
@@ -43,6 +47,7 @@ export type MiniAppData = {
     stars_paid: number;
   };
   projects: MiniAppProject[];
+  latest_projects?: MiniAppProject[];
 };
 
 export async function loadMiniAppData(initData: string): Promise<MiniAppData | null> {
