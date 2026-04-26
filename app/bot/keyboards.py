@@ -66,10 +66,15 @@ def projects_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="📚 Мои проекты"),
             ],
             [
+                KeyboardButton(text="🔎 Найти проект"),
+                KeyboardButton(text="🧠 Контекст проектов"),
+            ],
+            [
                 KeyboardButton(text="⬅️ Назад"),
             ],
         ],
         resize_keyboard=True,
+        input_field_placeholder="Добавь проект, найди проект или вернись назад",
     )
 
 

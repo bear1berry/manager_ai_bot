@@ -19,7 +19,7 @@ class UserRepository:
         last_name: str | None,
     ) -> aiosqlite.Row:
         await self.db.execute(
-            '''
+            """
             INSERT INTO users (telegram_id, username, first_name, last_name)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(telegram_id) DO UPDATE SET
@@ -27,7 +27,7 @@ class UserRepository:
                 first_name = excluded.first_name,
                 last_name = excluded.last_name,
                 updated_at = CURRENT_TIMESTAMP
-            ''',
+            """,
             (telegram_id, username, first_name, last_name),
         )
         await self.db.commit()
@@ -50,11 +50,11 @@ class UserRepository:
 
     async def set_plan(self, telegram_id: int, plan: str) -> None:
         await self.db.execute(
-            '''
+            """
             UPDATE users
             SET plan = ?, updated_at = CURRENT_TIMESTAMP
             WHERE telegram_id = ?
-            ''',
+            """,
             (plan, telegram_id),
         )
         await self.db.commit()
@@ -73,13 +73,13 @@ class MessageRepository:
 
     async def recent(self, user_id: int, limit: int = 12) -> list[dict[str, str]]:
         cursor = await self.db.execute(
-            '''
+            """
             SELECT role, content
             FROM messages
             WHERE user_id = ?
             ORDER BY id DESC
             LIMIT ?
-            ''',
+            """,
             (user_id, limit),
         )
         rows = await cursor.fetchall()
@@ -93,13 +93,13 @@ class UsageRepository:
 
     async def count_today(self, user_id: int, kind: str) -> int:
         cursor = await self.db.execute(
-            '''
+            """
             SELECT COUNT(*) AS cnt
             FROM usage_events
             WHERE user_id = ?
               AND kind = ?
               AND created_date = DATE('now')
-            ''',
+            """,
             (user_id, kind),
         )
         row = await cursor.fetchone()
@@ -117,29 +117,87 @@ class ProjectRepository:
     def __init__(self, db: aiosqlite.Connection) -> None:
         self.db = db
 
-    async def create(self, user_id: int, title: str, description: str = "") -> None:
-        await self.db.execute(
-            '''
+    async def create(self, user_id: int, title: str, description: str = "") -> int:
+        cursor = await self.db.execute(
+            """
             INSERT INTO projects (user_id, title, description)
             VALUES (?, ?, ?)
-            ''',
+            """,
             (user_id, title, description),
         )
         await self.db.commit()
+        return int(cursor.lastrowid)
 
-    async def list_active(self, user_id: int) -> list[aiosqlite.Row]:
+    async def list_active(self, user_id: int, limit: int = 20) -> list[aiosqlite.Row]:
         cursor = await self.db.execute(
-            '''
+            """
             SELECT *
             FROM projects
             WHERE user_id = ?
               AND status = 'active'
             ORDER BY updated_at DESC, id DESC
-            LIMIT 20
-            ''',
-            (user_id,),
+            LIMIT ?
+            """,
+            (user_id, limit),
         )
         return await cursor.fetchall()
+
+    async def search_active(self, user_id: int, query: str, limit: int = 5) -> list[aiosqlite.Row]:
+        normalized = f"%{query.strip()}%"
+
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM projects
+            WHERE user_id = ?
+              AND status = 'active'
+              AND (
+                    title LIKE ?
+                 OR description LIKE ?
+              )
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, normalized, normalized, limit),
+        )
+        return await cursor.fetchall()
+
+    async def latest_context(self, user_id: int, limit: int = 5) -> list[aiosqlite.Row]:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM projects
+            WHERE user_id = ?
+              AND status = 'active'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        return await cursor.fetchall()
+
+    async def append_note(self, project_id: int, note: str) -> None:
+        cursor = await self.db.execute(
+            "SELECT description FROM projects WHERE id = ?",
+            (project_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return
+
+        old_description = str(row["description"] or "")
+        new_description = f"{old_description}\n\nЗаметка:\n{note.strip()}".strip()
+
+        await self.db.execute(
+            """
+            UPDATE projects
+            SET description = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (new_description, project_id),
+        )
+        await self.db.commit()
 
 
 class QueueRepository:
@@ -149,10 +207,10 @@ class QueueRepository:
     async def enqueue(self, kind: str, payload: dict[str, Any], dedupe_key: str) -> int | None:
         try:
             cursor = await self.db.execute(
-                '''
+                """
                 INSERT INTO queue (kind, payload, dedupe_key)
                 VALUES (?, ?, ?)
-                ''',
+                """,
                 (
                     kind,
                     orjson.dumps(payload).decode("utf-8"),
@@ -167,13 +225,13 @@ class QueueRepository:
     async def claim_next(self) -> aiosqlite.Row | None:
         await self.db.execute("BEGIN IMMEDIATE")
         cursor = await self.db.execute(
-            '''
+            """
             SELECT *
             FROM queue
             WHERE status = 'pending'
             ORDER BY id ASC
             LIMIT 1
-            '''
+            """
         )
         row = await cursor.fetchone()
 
@@ -182,14 +240,14 @@ class QueueRepository:
             return None
 
         await self.db.execute(
-            '''
+            """
             UPDATE queue
             SET status = 'processing',
                 attempts = attempts + 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
               AND status = 'pending'
-            ''',
+            """,
             (row["id"],),
         )
         await self.db.commit()
@@ -199,13 +257,13 @@ class QueueRepository:
 
     async def mark_done(self, queue_id: int) -> None:
         await self.db.execute(
-            '''
+            """
             UPDATE queue
             SET status = 'done',
                 updated_at = CURRENT_TIMESTAMP,
                 last_error = NULL
             WHERE id = ?
-            ''',
+            """,
             (queue_id,),
         )
         await self.db.commit()
@@ -221,13 +279,13 @@ class QueueRepository:
         status = "failed" if attempts >= max_attempts else "pending"
 
         await self.db.execute(
-            '''
+            """
             UPDATE queue
             SET status = ?,
                 updated_at = CURRENT_TIMESTAMP,
                 last_error = ?
             WHERE id = ?
-            ''',
+            """,
             (status, error[:2000], queue_id),
         )
         await self.db.commit()

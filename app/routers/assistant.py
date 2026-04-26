@@ -11,10 +11,21 @@ from app.bot.keyboards import assistant_keyboard, main_keyboard
 from app.config import get_settings
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
+from app.services.projects import (
+    build_projects_context,
+    build_prompt_with_project_context,
+    should_use_project_context,
+)
 from app.services.queue import enqueue_media_task
 from app.services.users import ensure_user
 from app.storage.db import connect_db
-from app.storage.repositories import MessageRepository, QueueRepository, UsageRepository, UserRepository
+from app.storage.repositories import (
+    MessageRepository,
+    ProjectRepository,
+    QueueRepository,
+    UsageRepository,
+    UserRepository,
+)
 from app.utils.files import ensure_dir
 from app.utils.text import split_long_text
 
@@ -37,7 +48,7 @@ async def assistant_menu_handler(message: Message) -> None:
         "— ответ клиенту;\n"
         "— разобрать хаос;\n"
         "— сделать план.\n\n"
-        "Формула простая: скинь вводные — получи порядок.",
+        "Если вопрос похож на проектный — я подмешаю контекст из `🗂 Проекты`.",
         reply_markup=assistant_keyboard(),
         parse_mode="Markdown",
     )
@@ -134,6 +145,8 @@ async def text_assistant_handler(message: Message) -> None:
         "🏢 Business",
         "➕ Новый проект",
         "📚 Мои проекты",
+        "🔎 Найти проект",
+        "🧠 Контекст проектов",
         "🧾 КП",
         "📋 План работ",
         "📝 Резюме встречи",
@@ -149,6 +162,7 @@ async def text_assistant_handler(message: Message) -> None:
         user_repo = UserRepository(db)
         usage_repo = UsageRepository(db)
         msg_repo = MessageRepository(db)
+        project_repo = ProjectRepository(db)
 
         user_db_id = await ensure_user(user_repo, message.from_user)
         user = await user_repo.get_by_telegram_id(message.from_user.id)
@@ -170,15 +184,29 @@ async def text_assistant_handler(message: Message) -> None:
             )
             return
 
+        project_context = ""
+        if should_use_project_context(text):
+            found_projects = await project_repo.search_active(user_id=user_db_id, query=text, limit=5)
+
+            if not found_projects:
+                found_projects = await project_repo.latest_context(user_id=user_db_id, limit=3)
+
+            project_context = build_projects_context(found_projects)
+
+        enriched_text = build_prompt_with_project_context(text, project_context)
+
         await usage_repo.add(user_id=user_db_id, kind="text")
         await msg_repo.add(user_id=user_db_id, role="user", content=text)
 
         history = await msg_repo.recent(user_id=user_db_id, limit=12)
 
-    await message.answer("Думаю и собираю ответ в рабочую структуру 🧠")
+    if project_context:
+        await message.answer("🧠 Нашёл проектный контекст. Отвечаю с учётом памяти.")
+    else:
+        await message.answer("Думаю и собираю ответ в рабочую структуру 🧠")
 
     llm = LLMService(settings)
-    answer = await llm.complete(user_text=text, history=history, mode="assistant")
+    answer = await llm.complete(user_text=enriched_text, history=history, mode="assistant")
 
     async with await connect_db(settings.database_path) as db:
         user = await UserRepository(db).get_by_telegram_id(message.from_user.id)
