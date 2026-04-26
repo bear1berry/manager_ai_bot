@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     exports_dir: str = Field(default="exports", alias="EXPORTS_DIR")
     logs_dir: str = Field(default="logs", alias="LOGS_DIR")
 
+    mini_app_url: str = Field(default="", alias="MINI_APP_URL")
+
     llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_model: str = Field(default="deepseek-chat", alias="LLM_MODEL")

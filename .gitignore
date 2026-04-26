@@ -1,19 +1,39 @@
+
 .env
+
 .venv/
+
 venv/
+
 __pycache__/
+
 *.pyc
+
 *.pyo
+
 *.pyd
+
 .DS_Store
 
 data/*.sqlite3
+
 data/*.db
+
 data/*.sqlite3-shm
+
 data/*.sqlite3-wal
 
 exports/*
+
 !exports/.gitkeep
 
 logs/*
+
 !logs/.gitkeep
+
+miniapp/node_modules/
+
+miniapp/dist/
+
+miniapp/.env
+
