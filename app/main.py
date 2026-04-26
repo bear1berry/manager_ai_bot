@@ -53,7 +53,7 @@ async def main() -> None:
 
         api_runner = await start_miniapp_api(settings)
 
-        worker_task = asyncio.create_task(worker.run(), name="queue-worker")
+        worker_task = asyncio.create_task(worker.start(), name="queue-worker")
 
         logger.info("Bot polling started: %s", settings.app_name)
         await dispatcher.start_polling(bot)
