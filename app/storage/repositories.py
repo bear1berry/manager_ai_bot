@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -228,6 +229,96 @@ class ProjectRepository:
             (new_description, project_id),
         )
         await self.db.commit()
+
+
+class DocumentRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def create(
+        self,
+        user_id: int,
+        doc_type: str,
+        title: str,
+        docx_path: str | None,
+        pdf_path: str | None,
+        status: str = "created",
+    ) -> int:
+        docx_size = self._file_size(docx_path)
+        pdf_size = self._file_size(pdf_path)
+
+        cursor = await self.db.execute(
+            """
+            INSERT INTO documents (
+                user_id,
+                doc_type,
+                title,
+                docx_path,
+                pdf_path,
+                docx_size_bytes,
+                pdf_size_bytes,
+                status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                doc_type,
+                title,
+                docx_path,
+                pdf_path,
+                docx_size,
+                pdf_size,
+                status,
+            ),
+        )
+        await self.db.commit()
+        return int(cursor.lastrowid)
+
+    async def latest(self, user_id: int, limit: int = 10) -> list[aiosqlite.Row]:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM documents
+            WHERE user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        return await cursor.fetchall()
+
+    async def count(self, user_id: int) -> int:
+        cursor = await self.db.execute(
+            "SELECT COUNT(*) FROM documents WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    async def count_today(self, user_id: int) -> int:
+        cursor = await self.db.execute(
+            """
+            SELECT COUNT(*)
+            FROM documents
+            WHERE user_id = ?
+              AND DATE(created_at) = DATE('now')
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    @staticmethod
+    def _file_size(path: str | None) -> int:
+        if not path:
+            return 0
+
+        file_path = Path(path)
+        if not file_path.exists() or not file_path.is_file():
+            return 0
+
+        return int(file_path.stat().st_size)
 
 
 class FeedbackRepository:
@@ -559,6 +650,8 @@ class AdminRepository:
             ),
             "projects_total": await self._count("SELECT COUNT(*) FROM projects"),
             "projects_active": await self._count("SELECT COUNT(*) FROM projects WHERE status = 'active'"),
+            "documents_total": await self._count("SELECT COUNT(*) FROM documents"),
+            "documents_today": await self._count("SELECT COUNT(*) FROM documents WHERE DATE(created_at) = DATE('now')"),
             "feedback_total": await self._count("SELECT COUNT(*) FROM feedback"),
             "feedback_positive": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'positive'"),
             "feedback_negative": await self._count("SELECT COUNT(*) FROM feedback WHERE rating = 'negative'"),

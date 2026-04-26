@@ -66,6 +66,27 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE INDEX IF NOT EXISTS idx_projects_user_status_updated
 ON projects(user_id, status, updated_at);
 
+CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    doc_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    docx_path TEXT,
+    pdf_path TEXT,
+    docx_size_bytes INTEGER NOT NULL DEFAULT 0,
+    pdf_size_bytes INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'created',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_user_created_at
+ON documents(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_documents_user_type_created_at
+ON documents(user_id, doc_type, created_at);
+
 CREATE TABLE IF NOT EXISTS queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -154,12 +175,22 @@ async def _column_exists(db: aiosqlite.Connection, table: str, column: str) -> b
     return any(str(row[1]) == column for row in rows)
 
 
-async def _run_migrations(db: aiosqlite.Connection) -> None:
-    if not await _column_exists(db, "users", "plan_expires_at"):
-        await db.execute("ALTER TABLE users ADD COLUMN plan_expires_at TEXT")
+async def _table_exists(db: aiosqlite.Connection, table: str) -> bool:
+    cursor = await db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+        (table,),
+    )
+    row = await cursor.fetchone()
+    return row is not None
 
-    if not await _column_exists(db, "users", "plan_updated_at"):
-        await db.execute("ALTER TABLE users ADD COLUMN plan_updated_at TEXT")
+
+async def _run_migrations(db: aiosqlite.Connection) -> None:
+    if await _table_exists(db, "users"):
+        if not await _column_exists(db, "users", "plan_expires_at"):
+            await db.execute("ALTER TABLE users ADD COLUMN plan_expires_at TEXT")
+
+        if not await _column_exists(db, "users", "plan_updated_at"):
+            await db.execute("ALTER TABLE users ADD COLUMN plan_updated_at TEXT")
 
     await db.commit()
 

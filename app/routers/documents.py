@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -14,7 +15,7 @@ from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
 from app.services.users import ensure_user
 from app.storage.db import connect_db
-from app.storage.repositories import UsageRepository, UserRepository
+from app.storage.repositories import DocumentRepository, UsageRepository, UserRepository
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -44,7 +45,8 @@ async def documents_menu_handler(message: Message, state: FSMContext) -> None:
         "— резюме встречи;\n"
         "— чек-лист.\n\n"
         "<b>Как пользоваться</b>\n"
-        "Выбери тип документа и отправь вводные одним сообщением. Можно писать сыро — я структурирую.",
+        "Выбери тип документа и отправь вводные одним сообщением. Можно писать сыро — я структурирую.\n\n"
+        "История созданных документов теперь отображается в Mini App.",
         reply_markup=documents_keyboard(),
         parse_mode="HTML",
     )
@@ -62,7 +64,7 @@ async def choose_document_handler(message: Message, state: FSMContext) -> None:
         "<b>Пример</b>\n"
         "<code>КП на настройку рекламы для салона красоты. Бюджет 35 000 ₽. "
         "Срок 14 дней. Цель — заявки из Telegram и VK.</code>\n\n"
-        "После этого я соберу структуру и отправлю файлы.",
+        "После этого я соберу структуру, отправлю файлы и сохраню запись в историю документов.",
         reply_markup=documents_keyboard(),
         parse_mode="HTML",
     )
@@ -82,6 +84,7 @@ async def generate_document_handler(message: Message, state: FSMContext) -> None
     data = await state.get_data()
     doc_type = str(data.get("doc_type", "checklist"))
     title = str(data.get("title", "Документ"))
+    user_id = 0
 
     async with await connect_db(settings.database_path) as db:
         user_repo = UserRepository(db)
@@ -113,7 +116,8 @@ async def generate_document_handler(message: Message, state: FSMContext) -> None
         "🧠 <b>Собираю документ</b>\n\n"
         "— анализирую вводные;\n"
         "— формирую структуру;\n"
-        "— готовлю DOCX/PDF.",
+        "— готовлю DOCX/PDF;\n"
+        "— сохраню результат в историю.",
         reply_markup=documents_keyboard(),
         parse_mode="HTML",
     )
@@ -129,24 +133,36 @@ async def generate_document_handler(message: Message, state: FSMContext) -> None
         service = DocumentService(settings)
         generated = service.generate_from_data(data=document_data, fallback_title=title)
 
+        document_title = str(document_data.get("title") or title)
+
+        async with await connect_db(settings.database_path) as db:
+            await DocumentRepository(db).create(
+                user_id=user_id,
+                doc_type=doc_type,
+                title=document_title,
+                docx_path=str(generated.docx_path),
+                pdf_path=str(generated.pdf_path) if generated.pdf_path else None,
+                status="created",
+            )
+
         await state.clear()
 
         await message.answer(
-            "✅ <b>Документ собран</b>\n\n"
-            "Отправляю файлы. Если PDF не пришёл — значит временно сработал fallback на DOCX.",
+            "✅ <b>Документ собран и сохранён</b>\n\n"
+            "Файлы отправляю ниже. История документа теперь доступна в Mini App.",
             reply_markup=main_keyboard(),
             parse_mode="HTML",
         )
 
         await message.answer_document(
             FSInputFile(generated.docx_path),
-            caption=f"📄 {document_data.get('title', title)} / DOCX",
+            caption=f"📄 {document_title} / DOCX",
         )
 
-        if generated.pdf_path:
+        if generated.pdf_path and Path(generated.pdf_path).exists():
             await message.answer_document(
                 FSInputFile(generated.pdf_path),
-                caption=f"📄 {document_data.get('title', title)} / PDF",
+                caption=f"📄 {document_title} / PDF",
             )
 
     except Exception:

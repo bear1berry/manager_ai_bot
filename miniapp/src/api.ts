@@ -11,6 +11,24 @@ export type MiniAppProject = {
   updated_text?: string;
 };
 
+export type MiniAppDocument = {
+  id: number;
+  doc_type: string;
+  doc_type_label: string;
+  title: string;
+  status: string;
+  status_label?: string;
+  has_docx: boolean;
+  has_pdf: boolean;
+  docx_size_bytes: number;
+  pdf_size_bytes: number;
+  docx_size_text: string;
+  pdf_size_text: string;
+  created_at: string;
+  created_text: string;
+  updated_at: string;
+};
+
 export type MiniAppData = {
   ok: boolean;
   demo?: boolean;
@@ -42,12 +60,15 @@ export type MiniAppData = {
     projects_total: number;
     messages_total: number;
     documents_generated: number;
+    documents_today?: number;
     feedback_total: number;
     payments_paid: number;
     stars_paid: number;
   };
   projects: MiniAppProject[];
   latest_projects?: MiniAppProject[];
+  documents?: MiniAppDocument[];
+  latest_documents?: MiniAppDocument[];
 };
 
 export async function loadMiniAppData(initData: string): Promise<MiniAppData | null> {

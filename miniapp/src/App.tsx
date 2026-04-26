@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { loadMiniAppData, type MiniAppData, type MiniAppProject } from "./api";
+import { loadMiniAppData, type MiniAppData, type MiniAppDocument, type MiniAppProject } from "./api";
 
 type TelegramWebApp = {
   ready: () => void;
@@ -55,7 +55,8 @@ const fallbackData: MiniAppData = {
   stats: {
     projects_total: 2,
     messages_total: 14,
-    documents_generated: 1,
+    documents_generated: 2,
+    documents_today: 1,
     feedback_total: 3,
     payments_paid: 0,
     stars_paid: 0
@@ -84,6 +85,42 @@ const fallbackData: MiniAppData = {
       created_at: "demo",
       updated_at: "demo",
       updated_text: "вчера"
+    }
+  ],
+  documents: [
+    {
+      id: 1,
+      doc_type: "commercial_offer",
+      doc_type_label: "КП",
+      title: "КП на настройку рекламы",
+      status: "created",
+      status_label: "Готов",
+      has_docx: true,
+      has_pdf: true,
+      docx_size_bytes: 38400,
+      pdf_size_bytes: 124000,
+      docx_size_text: "38 КБ",
+      pdf_size_text: "121 КБ",
+      created_at: "demo",
+      created_text: "сегодня",
+      updated_at: "demo"
+    },
+    {
+      id: 2,
+      doc_type: "work_plan",
+      doc_type_label: "План работ",
+      title: "План запуска Mini App",
+      status: "created",
+      status_label: "Готов",
+      has_docx: true,
+      has_pdf: false,
+      docx_size_bytes: 42000,
+      pdf_size_bytes: 0,
+      docx_size_text: "41 КБ",
+      pdf_size_text: "—",
+      created_at: "demo",
+      created_text: "вчера",
+      updated_at: "demo"
     }
   ]
 };
@@ -245,10 +282,10 @@ function HomeScreen({ data }: { data: MiniAppData }) {
           onClick={() => sendToBot("assistant")}
         />
         <ActionCard
-          title="Показать возможности"
-          text="Демо помогает первому пользователю быстро понять ценность продукта."
-          button="Открыть демо"
-          onClick={() => sendToBot("demo")}
+          title="Создать документ"
+          text="Преврати сырые вводные в КП, план работ, резюме встречи или чек-лист."
+          button="Открыть документы"
+          onClick={() => sendToBot("documents")}
         />
       </div>
     </>
@@ -265,9 +302,7 @@ function ProjectsScreen({ data }: { data: MiniAppData }) {
         <h2>Проекты</h2>
       </div>
 
-      <p className="lead">
-        Рабочая память: клиенты, сроки, бюджеты, договорённости и следующий шаг.
-      </p>
+      <p className="lead">Рабочая память: клиенты, сроки, бюджеты, договорённости и следующий шаг.</p>
 
       <div className="project-actions">
         <button type="button" onClick={() => sendToBot("projects")}>
@@ -297,6 +332,8 @@ function ProjectsScreen({ data }: { data: MiniAppData }) {
 }
 
 function DocumentsScreen({ data }: { data: MiniAppData }) {
+  const documents = data.latest_documents || data.documents || [];
+
   return (
     <>
       <div className="section-heading">
@@ -305,20 +342,33 @@ function DocumentsScreen({ data }: { data: MiniAppData }) {
       </div>
 
       <p className="lead">
-        Создано документов: <strong>{data.stats.documents_generated}</strong>. Следующий слой — история документов и
-        повторное скачивание.
+        Создано документов: <strong>{data.stats.documents_generated}</strong>. Сегодня:{" "}
+        <strong>{data.stats.documents_today || 0}</strong>.
       </p>
 
-      <div className="document-grid">
-        <DocumentType title="КП" icon="◇" />
-        <DocumentType title="План работ" icon="▦" />
-        <DocumentType title="Резюме встречи" icon="≡" />
-        <DocumentType title="Чек-лист" icon="☑" />
+      <div className="document-actions">
+        <button type="button" onClick={() => sendToBot("documents")}>
+          Создать документ
+        </button>
+        <button type="button" onClick={() => sendToBot("demo_document")}>
+          Демо документа
+        </button>
       </div>
 
-      <button className="primary-button" onClick={() => sendToBot("documents")} type="button">
-        Собрать документ
-      </button>
+      {documents.length === 0 ? (
+        <EmptyState
+          title="Документов пока нет"
+          text="Собери первый документ в боте. История появится здесь автоматически."
+          button="Создать документ"
+          onClick={() => sendToBot("documents")}
+        />
+      ) : (
+        <div className="document-history">
+          {documents.map((document) => (
+            <DocumentCard key={document.id} document={document} />
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -416,6 +466,39 @@ function ProjectCard({ project }: { project: MiniAppProject }) {
   );
 }
 
+function DocumentCard({ document }: { document: MiniAppDocument }) {
+  return (
+    <article className="history-document-card">
+      <div className="history-document-top">
+        <div>
+          <div className="document-badge">{document.doc_type_label}</div>
+          <h3>{document.title}</h3>
+        </div>
+        <span>{document.created_text}</span>
+      </div>
+
+      <div className="document-file-row">
+        <span className={document.has_docx ? "file-pill active" : "file-pill"}>DOCX · {document.docx_size_text}</span>
+        <span className={document.has_pdf ? "file-pill active" : "file-pill"}>PDF · {document.pdf_size_text}</span>
+      </div>
+
+      <div className="document-status-row">
+        <span>{document.status_label || document.status}</span>
+        <span>ID #{document.id}</span>
+      </div>
+
+      <div className="document-card-actions">
+        <button type="button" onClick={() => sendToBot("documents")}>
+          Новый
+        </button>
+        <button type="button" onClick={() => sendToBot(`document_${document.id}`)}>
+          Открыть
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function EmptyState({
   title,
   text,
@@ -476,15 +559,6 @@ function Feature({ title, text }: { title: string; text: string }) {
     <article className="feature">
       <h3>{title}</h3>
       <p>{text}</p>
-    </article>
-  );
-}
-
-function DocumentType({ title, icon }: { title: string; icon: string }) {
-  return (
-    <article className="doc-type">
-      <span>{icon}</span>
-      <strong>{title}</strong>
     </article>
   );
 }
