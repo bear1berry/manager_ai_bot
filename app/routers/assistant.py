@@ -11,6 +11,7 @@ from aiogram.types import Message
 
 from app.bot.keyboards import assistant_keyboard, main_keyboard
 from app.config import get_settings
+from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
 from app.services.projects import (
@@ -29,7 +30,7 @@ from app.storage.repositories import (
     UserRepository,
 )
 from app.utils.files import ensure_dir
-from app.utils.text import split_long_text
+from app.utils.text import split_long_text, telegram_html_from_ai_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -90,6 +91,7 @@ SERVICE_BUTTONS = {
     "📚 Мои проекты",
     "🔎 Найти проект",
     "🧠 Контекст проектов",
+    "📝 Заметка в проект",
     "🧾 КП",
     "📋 План работ",
     "📝 Резюме встречи",
@@ -101,15 +103,16 @@ SERVICE_BUTTONS = {
 async def assistant_menu_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        "🧠 **Ассистент**\n\n"
+        "🧠 <b>Ассистент</b>\n\n"
         "Выбери быстрый режим или просто напиши задачу обычным сообщением.\n\n"
-        "Режимы:\n"
-        "— `✍️ Ответ клиенту` — деловой ответ без оправданий;\n"
-        "— `🧾 Разобрать хаос` — мысли → структура;\n"
-        "— `📌 Сделать план` — цель → действия.\n\n"
-        "Если вопрос похож на проектный — я подмешаю контекст из `🗂 Проекты`.",
+        "<b>Режимы</b>\n"
+        "— ✍️ Ответ клиенту — деловой ответ без оправданий;\n"
+        "— 🧾 Разобрать хаос — мысли → структура;\n"
+        "— 📌 Сделать план — цель → действия.\n\n"
+        "Я также умею сам определить сценарий по тексту. "
+        "Если вопрос похож на проектный — подмешаю контекст из 🗂 Проекты.",
         reply_markup=assistant_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -189,13 +192,13 @@ async def fast_mode_handler(message: Message, state: FSMContext) -> None:
     )
 
     await message.answer(
-        f"⚡ **Режим: {mode_data['title']}**\n\n"
+        f"⚡ <b>Режим: {mode_data['title']}</b>\n\n"
         f"{mode_data['hint']}\n\n"
-        "**Пример:**\n"
-        f"`{mode_data['example']}`\n\n"
-        "Чтобы выйти из режима — нажми `⬅️ Назад`.",
+        "<b>Пример</b>\n"
+        f"<code>{mode_data['example']}</code>\n\n"
+        "Чтобы выйти из режима — нажми ⬅️ Назад.",
         reply_markup=assistant_keyboard(),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -225,11 +228,17 @@ async def fast_mode_input_handler(message: Message, state: FSMContext) -> None:
 
     await state.clear()
 
+    manual_intent = IntentResult(
+        mode=mode,
+        title=mode_title,
+        confidence=1.0,
+        reason="Режим выбран пользователем вручную",
+    )
+
     await _process_text_request(
         message=message,
         text=text,
-        mode=mode,
-        thinking_message=f"⚡ Режим `{mode_title}` активен. Собираю ответ.",
+        intent=manual_intent,
         use_project_context=True,
     )
 
@@ -244,11 +253,12 @@ async def text_assistant_handler(message: Message) -> None:
     if text in SERVICE_BUTTONS or text in MODE_BY_BUTTON:
         return
 
+    detected_intent = detect_intent(text)
+
     await _process_text_request(
         message=message,
         text=text,
-        mode="assistant",
-        thinking_message="Думаю и собираю ответ в рабочую структуру 🧠",
+        intent=detected_intent,
         use_project_context=True,
     )
 
@@ -256,8 +266,7 @@ async def text_assistant_handler(message: Message) -> None:
 async def _process_text_request(
     message: Message,
     text: str,
-    mode: str,
-    thinking_message: str,
+    intent: IntentResult,
     use_project_context: bool,
 ) -> None:
     settings = get_settings()
@@ -304,13 +313,13 @@ async def _process_text_request(
 
         history = await msg_repo.recent(user_id=user_db_id, limit=12)
 
-    if project_context:
-        await message.answer("🧠 Нашёл проектный контекст. Отвечаю с учётом памяти.")
-    else:
-        await message.answer(thinking_message, parse_mode="Markdown")
+    await message.answer(
+        telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context))),
+        parse_mode="HTML",
+    )
 
     llm = LLMService(settings)
-    answer = await llm.complete(user_text=enriched_text, history=history, mode=mode)
+    answer = await llm.complete(user_text=enriched_text, history=history, mode=intent.mode)
 
     async with await connect_db(settings.database_path) as db:
         user = await UserRepository(db).get_by_telegram_id(message.from_user.id)
@@ -319,7 +328,7 @@ async def _process_text_request(
 
     for chunk in split_long_text(answer):
         await message.answer(
-            chunk,
+            telegram_html_from_ai_text(chunk),
             reply_markup=main_keyboard(),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
