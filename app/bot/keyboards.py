@@ -15,6 +15,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="👤 Профиль"),
             ],
             [
+                KeyboardButton(text="🚀 Демо"),
                 KeyboardButton(text="💎 Подписка"),
             ],
         ],
@@ -52,6 +53,26 @@ def feedback_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         input_field_placeholder="Оцени последний ответ",
+    )
+
+
+def demo_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="🧾 Демо: хаос"),
+                KeyboardButton(text="🗂 Демо: проект"),
+            ],
+            [
+                KeyboardButton(text="📄 Демо: документ"),
+                KeyboardButton(text="✅ Демо: что дальше"),
+            ],
+            [
+                KeyboardButton(text="⬅️ Назад"),
+            ],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выбери демо-сценарий",
     )
 
 

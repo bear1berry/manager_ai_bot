@@ -13,6 +13,7 @@ async def setup_bot_commands(bot: Bot) -> None:
         BotCommand(command="start", description="Запустить Менеджер ИИ"),
         BotCommand(command="menu", description="Открыть главное меню"),
         BotCommand(command="help", description="Как пользоваться ботом"),
+        BotCommand(command="demo", description="Быстрое демо возможностей"),
         BotCommand(command="profile", description="Профиль, тариф и лимиты"),
         BotCommand(command="projects", description="Проекты и рабочая память"),
         BotCommand(command="admin", description="Админ-панель"),
