@@ -293,3 +293,84 @@ class QueueRepository:
     @staticmethod
     def parse_payload(row: aiosqlite.Row) -> dict[str, Any]:
         return json.loads(row["payload"])
+
+
+class AdminRepository:
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self.db = db
+
+    async def product_stats(self) -> dict[str, int]:
+        return {
+            "users_total": await self._count("SELECT COUNT(*) FROM users"),
+            "users_today": await self._count("SELECT COUNT(*) FROM users WHERE DATE(created_at) = DATE('now')"),
+            "messages_total": await self._count("SELECT COUNT(*) FROM messages"),
+            "messages_today": await self._count("SELECT COUNT(*) FROM messages WHERE DATE(created_at) = DATE('now')"),
+            "text_usage_today": await self._count(
+                "SELECT COUNT(*) FROM usage_events WHERE kind = 'text' AND created_date = DATE('now')"
+            ),
+            "voice_usage_today": await self._count(
+                "SELECT COUNT(*) FROM usage_events WHERE kind = 'voice' AND created_date = DATE('now')"
+            ),
+            "projects_total": await self._count("SELECT COUNT(*) FROM projects"),
+            "projects_active": await self._count("SELECT COUNT(*) FROM projects WHERE status = 'active'"),
+            "queue_pending": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'pending'"),
+            "queue_processing": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'processing'"),
+            "queue_done": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'done'"),
+            "queue_failed": await self._count("SELECT COUNT(*) FROM queue WHERE status = 'failed'"),
+        }
+
+    async def queue_stats(self) -> dict[str, int]:
+        cursor = await self.db.execute(
+            """
+            SELECT status, COUNT(*) AS cnt
+            FROM queue
+            GROUP BY status
+            """
+        )
+        rows = await cursor.fetchall()
+
+        result = {
+            "pending": 0,
+            "processing": 0,
+            "done": 0,
+            "failed": 0,
+        }
+
+        for row in rows:
+            result[str(row["status"])] = int(row["cnt"])
+
+        return result
+
+    async def latest_failed_queue(self, limit: int = 5) -> list[aiosqlite.Row]:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM queue
+            WHERE status = 'failed'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return await cursor.fetchall()
+
+    async def latest_users(self, limit: int = 10) -> list[aiosqlite.Row]:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM users
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return await cursor.fetchall()
+
+    async def _count(self, sql: str) -> int:
+        cursor = await self.db.execute(sql)
+        row = await cursor.fetchone()
+
+        if row is None:
+            return 0
+
+        return int(row[0])
