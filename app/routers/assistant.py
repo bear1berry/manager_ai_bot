@@ -5,6 +5,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from aiogram import Bot, F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
 from app.bot.keyboards import assistant_keyboard, main_keyboard
@@ -33,21 +35,78 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+class AssistantStates(StatesGroup):
+    waiting_mode_input = State()
+
+
 MODE_BY_BUTTON = {
-    "✍️ Ответ клиенту": "client_reply",
-    "🧾 Разобрать хаос": "chaos",
-    "📌 Сделать план": "plan",
+    "✍️ Ответ клиенту": {
+        "mode": "client_reply",
+        "title": "Ответ клиенту",
+        "hint": (
+            "Отправь переписку, претензию, вопрос клиента или короткие вводные.\n\n"
+            "Я соберу спокойный, профессиональный ответ без лишней воды."
+        ),
+        "example": (
+            "Клиент пишет: «Почему так дорого?» "
+            "Нужно ответить уверенно, без оправданий, показать ценность услуги."
+        ),
+    },
+    "🧾 Разобрать хаос": {
+        "mode": "chaos",
+        "title": "Разбор хаоса",
+        "hint": (
+            "Отправь любые сырые мысли, голос из головы, список проблем или кусок переписки.\n\n"
+            "Я разложу это на смысл, задачи, риски и следующий шаг."
+        ),
+        "example": (
+            "Нужно запустить проект, но непонятно с чего начать: есть клиент, сроки горят, "
+            "нет структуры и неясно, что делать первым."
+        ),
+    },
+    "📌 Сделать план": {
+        "mode": "plan",
+        "title": "План действий",
+        "hint": (
+            "Отправь цель, задачу или ситуацию.\n\n"
+            "Я соберу пошаговый план: что делать, в каком порядке и где контрольные точки."
+        ),
+        "example": (
+            "Нужно за 2 недели подготовить запуск Telegram-бота: тексты, меню, тесты, GitHub, деплой."
+        ),
+    },
+}
+
+
+SERVICE_BUTTONS = {
+    "⬅️ Назад",
+    "📄 Документы",
+    "🗂 Проекты",
+    "👤 Профиль",
+    "💎 Подписка",
+    "💎 Pro",
+    "🏢 Business",
+    "➕ Новый проект",
+    "📚 Мои проекты",
+    "🔎 Найти проект",
+    "🧠 Контекст проектов",
+    "🧾 КП",
+    "📋 План работ",
+    "📝 Резюме встречи",
+    "✅ Чек-лист",
 }
 
 
 @router.message(F.text == "🧠 Ассистент")
-async def assistant_menu_handler(message: Message) -> None:
+async def assistant_menu_handler(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await message.answer(
         "🧠 **Ассистент**\n\n"
-        "Можешь просто написать задачу или выбрать быстрый режим:\n\n"
-        "— ответ клиенту;\n"
-        "— разобрать хаос;\n"
-        "— сделать план.\n\n"
+        "Выбери быстрый режим или просто напиши задачу обычным сообщением.\n\n"
+        "Режимы:\n"
+        "— `✍️ Ответ клиенту` — деловой ответ без оправданий;\n"
+        "— `🧾 Разобрать хаос` — мысли → структура;\n"
+        "— `📌 Сделать план` — цель → действия.\n\n"
         "Если вопрос похож на проектный — я подмешаю контекст из `🗂 Проекты`.",
         reply_markup=assistant_keyboard(),
         parse_mode="Markdown",
@@ -120,11 +179,58 @@ async def voice_handler(message: Message, bot: Bot) -> None:
 
 
 @router.message(F.text.in_(MODE_BY_BUTTON.keys()))
-async def fast_mode_handler(message: Message) -> None:
+async def fast_mode_handler(message: Message, state: FSMContext) -> None:
+    mode_data = MODE_BY_BUTTON[message.text]
+
+    await state.set_state(AssistantStates.waiting_mode_input)
+    await state.update_data(
+        assistant_mode=mode_data["mode"],
+        assistant_mode_title=mode_data["title"],
+    )
+
     await message.answer(
-        "Принял режим.\n\n"
-        "Теперь отправь вводные следующим сообщением или сразу напиши задачу полностью.",
+        f"⚡ **Режим: {mode_data['title']}**\n\n"
+        f"{mode_data['hint']}\n\n"
+        "**Пример:**\n"
+        f"`{mode_data['example']}`\n\n"
+        "Чтобы выйти из режима — нажми `⬅️ Назад`.",
         reply_markup=assistant_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(AssistantStates.waiting_mode_input, F.text == "⬅️ Назад")
+async def cancel_fast_mode_handler(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "Режим сброшен. Возвращаю в главное меню.",
+        reply_markup=main_keyboard(),
+    )
+
+
+@router.message(AssistantStates.waiting_mode_input, F.text)
+async def fast_mode_input_handler(message: Message, state: FSMContext) -> None:
+    if not message.text:
+        return
+
+    text = message.text.strip()
+
+    if text in SERVICE_BUTTONS:
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    mode = str(data.get("assistant_mode") or "assistant")
+    mode_title = str(data.get("assistant_mode_title") or "Ассистент")
+
+    await state.clear()
+
+    await _process_text_request(
+        message=message,
+        text=text,
+        mode=mode,
+        thinking_message=f"⚡ Режим `{mode_title}` активен. Собираю ответ.",
+        use_project_context=True,
     )
 
 
@@ -135,27 +241,25 @@ async def text_assistant_handler(message: Message) -> None:
 
     text = message.text.strip()
 
-    service_buttons = {
-        "⬅️ Назад",
-        "📄 Документы",
-        "🗂 Проекты",
-        "👤 Профиль",
-        "💎 Подписка",
-        "💎 Pro",
-        "🏢 Business",
-        "➕ Новый проект",
-        "📚 Мои проекты",
-        "🔎 Найти проект",
-        "🧠 Контекст проектов",
-        "🧾 КП",
-        "📋 План работ",
-        "📝 Резюме встречи",
-        "✅ Чек-лист",
-    }
-
-    if text in service_buttons:
+    if text in SERVICE_BUTTONS or text in MODE_BY_BUTTON:
         return
 
+    await _process_text_request(
+        message=message,
+        text=text,
+        mode="assistant",
+        thinking_message="Думаю и собираю ответ в рабочую структуру 🧠",
+        use_project_context=True,
+    )
+
+
+async def _process_text_request(
+    message: Message,
+    text: str,
+    mode: str,
+    thinking_message: str,
+    use_project_context: bool,
+) -> None:
     settings = get_settings()
 
     async with await connect_db(settings.database_path) as db:
@@ -185,7 +289,7 @@ async def text_assistant_handler(message: Message) -> None:
             return
 
         project_context = ""
-        if should_use_project_context(text):
+        if use_project_context and should_use_project_context(text):
             found_projects = await project_repo.search_active(user_id=user_db_id, query=text, limit=5)
 
             if not found_projects:
@@ -203,10 +307,10 @@ async def text_assistant_handler(message: Message) -> None:
     if project_context:
         await message.answer("🧠 Нашёл проектный контекст. Отвечаю с учётом памяти.")
     else:
-        await message.answer("Думаю и собираю ответ в рабочую структуру 🧠")
+        await message.answer(thinking_message, parse_mode="Markdown")
 
     llm = LLMService(settings)
-    answer = await llm.complete(user_text=enriched_text, history=history, mode="assistant")
+    answer = await llm.complete(user_text=enriched_text, history=history, mode=mode)
 
     async with await connect_db(settings.database_path) as db:
         user = await UserRepository(db).get_by_telegram_id(message.from_user.id)
