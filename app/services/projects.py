@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from app.storage.repositories import ProjectRepository
+
+
+@dataclass(frozen=True)
+class ProjectNoteInput:
+    project_query: str
+    note: str
 
 
 def extract_project_title(text: str) -> str:
@@ -31,6 +38,44 @@ async def create_project_from_text(repo: ProjectRepository, user_id: int, text: 
         description = "Описание проекта пока не заполнено."
 
     return await repo.create(user_id=user_id, title=title, description=description)
+
+
+def parse_project_note_input(text: str) -> ProjectNoteInput | None:
+    """
+    Поддерживаемые форматы:
+
+    1) Иванова :: Клиент согласовал бюджет.
+    2) Иванова — Клиент согласовал бюджет.
+    3) Иванова
+       Клиент согласовал бюджет.
+
+    Первая часть — поисковый запрос по проекту.
+    Вторая часть — заметка.
+    """
+    clean = text.strip()
+    if not clean:
+        return None
+
+    separators = ["::", " — ", " - "]
+
+    for separator in separators:
+        if separator in clean:
+            left, right = clean.split(separator, 1)
+            project_query = left.strip()
+            note = right.strip()
+
+            if project_query and note:
+                return ProjectNoteInput(project_query=project_query[:120], note=note)
+
+    lines = [line.strip() for line in clean.splitlines() if line.strip()]
+    if len(lines) >= 2:
+        project_query = lines[0].strip()
+        note = "\n".join(lines[1:]).strip()
+
+        if project_query and note:
+            return ProjectNoteInput(project_query=project_query[:120], note=note)
+
+    return None
 
 
 def format_projects(rows) -> str:
@@ -80,6 +125,39 @@ def format_project_search_results(rows, query: str) -> str:
             f"**{index}. {row['title']}**\n"
             f"{description}\n"
         )
+
+    return "\n".join(lines)
+
+
+def format_project_note_examples() -> str:
+    return (
+        "📝 **Заметка в проект**\n\n"
+        "Отправь название проекта и заметку одним сообщением.\n\n"
+        "**Формат 1:**\n"
+        "`Иванова :: Клиент согласовал бюджет 450 000 ₽, финальная смета нужна до пятницы.`\n\n"
+        "**Формат 2:**\n"
+        "`Иванова — Клиент попросил добавить этап проверки.`\n\n"
+        "**Формат 3:**\n"
+        "`Иванова`\n"
+        "`Клиент просит не выходить за бюджет и хочет КП сегодня.`\n\n"
+        "Я найду проект по первой части и добавлю заметку в память."
+    )
+
+
+def format_ambiguous_project_note(rows, query: str) -> str:
+    lines = [
+        "⚠️ **Нашёл несколько похожих проектов**\n",
+        f"Запрос: `{query}`\n",
+        "Уточни название и отправь заметку ещё раз.\n",
+    ]
+
+    for index, row in enumerate(rows, start=1):
+        lines.append(f"{index}. **{row['title']}**")
+
+    lines.append(
+        "\nПример:\n"
+        "`Точное название проекта :: новая заметка`"
+    )
 
     return "\n".join(lines)
 
