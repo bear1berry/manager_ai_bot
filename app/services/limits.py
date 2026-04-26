@@ -7,6 +7,10 @@ from app.storage.repositories import UsageRepository
 
 ADMIN_LIMIT = 999_999_999
 
+PRO_STARS_PRICE = 299
+BUSINESS_STARS_PRICE = 999
+SUBSCRIPTION_DAYS = 30
+
 
 @dataclass(frozen=True)
 class LimitResult:
@@ -115,10 +119,10 @@ def plan_display_name(plan: str | None) -> str:
 
 def usage_line(label: str, used: int, limit: int) -> str:
     if limit >= ADMIN_LIMIT:
-        return f"— {label}: `{used}/∞` · без ограничений"
+        return f"— {label}: <code>{used}/∞</code> · без ограничений"
 
     remaining = max(limit - used, 0)
-    return f"— {label}: `{used}/{limit}` · осталось `{remaining}`"
+    return f"— {label}: <code>{used}/{limit}</code> · осталось <code>{remaining}</code>"
 
 
 def plan_features(plan: str | None) -> list[str]:
@@ -136,11 +140,12 @@ def plan_features(plan: str | None) -> list[str]:
 
     if normalized == "business":
         return [
-            "высокие дневные лимиты",
+            "максимальные дневные лимиты MVP",
             "проекты и рабочий контекст",
             "DOCX/PDF документы",
             "голосовые через очередь",
-            "будущие бизнес-шаблоны и командные сценарии",
+            "комфортный режим для активной рабочей нагрузки",
+            "база под будущие бизнес-шаблоны",
         ]
 
     if normalized == "pro":
@@ -149,7 +154,7 @@ def plan_features(plan: str | None) -> list[str]:
             "проекты и рабочий контекст",
             "DOCX/PDF документы",
             "больше голосовых",
-            "приоритет на продуктивные сценарии",
+            "комфортная ежедневная работа",
         ]
 
     return [
@@ -166,13 +171,15 @@ def next_plan_suggestion(plan: str | None) -> str:
 
     if normalized == "admin":
         return (
-            "🛡 **Admin активен**\n"
+            "🛡 <b>Admin активен</b>\n"
             "Лимиты отключены. Можно тестировать продукт без ограничений и вручную управлять тарифами."
         )
 
     if normalized == "free":
         return (
-            "💎 **Что даст Pro:**\n"
+            "💎 <b>Рекомендуемый следующий шаг</b>\n"
+            f"Pro за <code>{PRO_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</code>.\n\n"
+            "<b>Что даст Pro</b>\n"
             "— больше текстовых запросов;\n"
             "— больше голосовых;\n"
             "— полноценная работа с DOCX/PDF;\n"
@@ -181,27 +188,66 @@ def next_plan_suggestion(plan: str | None) -> str:
 
     if normalized == "pro":
         return (
-            "🏢 **Что даст Business:**\n"
-            "— максимальные лимиты;\n"
+            "🏢 <b>Можно усилить до Business</b>\n"
+            f"Business за <code>{BUSINESS_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</code>.\n\n"
+            "<b>Что даст Business</b>\n"
+            "— максимальные лимиты MVP;\n"
             "— больше пространства под рабочие сценарии;\n"
-            "— будущие шаблоны для бизнеса;\n"
+            "— будущие бизнес-шаблоны;\n"
             "— подготовка к командному использованию."
         )
 
     return (
-        "🏢 **Business активен**\n"
-        "Ты уже на верхнем уровне MVP. Следующий шаг — подключение оплат, брендирования и расширенной памяти."
+        "🏢 <b>Business активен</b>\n"
+        "Ты уже на верхнем уровне MVP. Следующий шаг — тестировать продукт на реальных рабочих сценариях."
     )
 
 
 def limit_message(result: LimitResult) -> str:
+    plan = normalize_plan(result.plan)
+    kind_label = "голосовые" if result.kind == "voice" else "текстовые запросы"
+
+    if plan == "free":
+        return (
+            "🚧 <b>Лимит на сегодня исчерпан</b>\n\n"
+            f"Ты использовал Free-лимит на <b>{kind_label}</b>:\n"
+            f"— использовано: <code>{result.used}/{result.limit}</code>.\n\n"
+            "💎 <b>Что даст Pro</b>\n"
+            "— больше запросов каждый день;\n"
+            "— больше голосовых;\n"
+            "— DOCX/PDF документы;\n"
+            "— удобная работа с проектами и клиентами.\n\n"
+            f"Стоимость: <code>{PRO_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</code>.\n\n"
+            "Чтобы продолжить без ожидания, нажми <b>💎 Подписка</b> в нижнем меню."
+        )
+
+    if plan == "pro":
+        return (
+            "🚧 <b>Лимит Pro на сегодня исчерпан</b>\n\n"
+            f"Тип: <b>{kind_label}</b>\n"
+            f"Использовано: <code>{result.used}/{result.limit}</code>.\n\n"
+            "🏢 <b>Что даст Business</b>\n"
+            "— максимальные лимиты MVP;\n"
+            "— комфорт для активной рабочей нагрузки;\n"
+            "— больше пространства под документы, проекты и голосовые.\n\n"
+            f"Стоимость: <code>{BUSINESS_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</code>.\n\n"
+            "Чтобы усилить тариф, нажми <b>💎 Подписка</b>."
+        )
+
     return (
-        "🚧 **Лимит на сегодня исчерпан**\n\n"
-        f"Тариф: `{plan_display_name(result.plan)}`\n"
-        f"Тип: `{result.kind}`\n"
-        f"Использовано: `{result.used}/{result.limit}`\n\n"
-        "Что делать дальше:\n"
-        "1. Продолжить завтра.\n"
-        "2. Перейти на Pro/Business.\n"
-        "3. Сократить количество тяжёлых запросов."
+        "🚧 <b>Лимит на сегодня исчерпан</b>\n\n"
+        f"Тариф: <b>{plan_display_name(result.plan)}</b>\n"
+        f"Тип: <b>{kind_label}</b>\n"
+        f"Использовано: <code>{result.used}/{result.limit}</code>.\n\n"
+        "Что можно сделать:\n"
+        "— продолжить завтра;\n"
+        "— сократить количество тяжёлых запросов;\n"
+        "— проверить тариф в профиле."
+    )
+
+
+def stars_pricing_summary() -> str:
+    return (
+        f"💎 Pro — <code>{PRO_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</code>\n"
+        f"🏢 Business — <code>{BUSINESS_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</code>"
     )

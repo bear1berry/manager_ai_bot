@@ -11,6 +11,7 @@ from app.services.limits import (
     next_plan_suggestion,
     plan_display_name,
     plan_features,
+    stars_pricing_summary,
     usage_line,
 )
 from app.services.payments import format_plan_expiry
@@ -67,8 +68,9 @@ async def profile_handler(message: Message) -> None:
         "🧩 <b>Доступно сейчас</b>\n"
         f"{_html_features(features)}\n\n"
         f"{next_plan_suggestion(plan)}\n\n"
-        "⭐ <b>Оплата</b>\n"
-        "Подписка подключается через Telegram Stars.",
+        "⭐ <b>Цены в Telegram Stars</b>\n"
+        f"{stars_pricing_summary()}\n\n"
+        "Оплата проходит внутри Telegram. После оплаты тариф активируется автоматически.",
         reply_markup=subscription_keyboard(),
         parse_mode="HTML",
     )

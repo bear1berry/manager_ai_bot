@@ -8,7 +8,13 @@ from aiogram.types import LabeledPrice, Message, PreCheckoutQuery
 
 from app.bot.keyboards import main_keyboard, subscription_keyboard
 from app.config import get_settings
-from app.services.limits import get_plan_limits, plan_display_name
+from app.services.limits import (
+    BUSINESS_STARS_PRICE,
+    PRO_STARS_PRICE,
+    SUBSCRIPTION_DAYS,
+    get_plan_limits,
+    plan_display_name,
+)
 from app.services.payments import build_stars_plan, calculate_expiry
 from app.services.users import ensure_user
 from app.storage.db import connect_db
@@ -31,19 +37,22 @@ def _tariff_card(settings) -> str:
         f"— голосовые: <code>{free.voice_limit}/день</code>;\n"
         "— базовый ассистент;\n"
         "— проекты и документы в MVP-режиме.\n\n"
-        "💎 <b>Pro — 299 ⭐ / 30 дней</b>\n"
+        f"💎 <b>Pro — {PRO_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</b>\n"
         f"— текст: <code>{pro.text_limit}/день</code>;\n"
         f"— голосовые: <code>{pro.voice_limit}/день</code>;\n"
         "— DOCX/PDF документы;\n"
         "— больше проектной работы;\n"
         "— комфортный ежедневный режим.\n\n"
-        "🏢 <b>Business — 999 ⭐ / 30 дней</b>\n"
+        f"🏢 <b>Business — {BUSINESS_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</b>\n"
         f"— текст: <code>{business.text_limit}/день</code>;\n"
         f"— голосовые: <code>{business.voice_limit}/день</code>;\n"
         "— максимальные лимиты MVP;\n"
-        "— будущие бизнес-шаблоны;\n"
-        "— база под командное использование.\n\n"
-        "Выбери тариф в нижнем меню."
+        "— больше пространства под активную работу;\n"
+        "— база под будущие бизнес-шаблоны.\n\n"
+        "<b>Как оплатить</b>\n"
+        "— выбери тариф в нижнем меню;\n"
+        "— Telegram покажет счёт в Stars;\n"
+        "— после оплаты тариф включится сам."
     )
 
 
@@ -77,6 +86,15 @@ async def plan_request_handler(message: Message, bot: Bot) -> None:
             stars_amount=stars_plan.stars_amount,
             payload=stars_plan.payload,
         )
+
+    await message.answer(
+        "⭐ <b>Создаю счёт Telegram Stars</b>\n\n"
+        f"Тариф: <b>{stars_plan.title}</b>\n"
+        f"Срок: <code>{stars_plan.days} дней</code>\n"
+        f"Стоимость: <code>{stars_plan.stars_amount} ⭐</code>\n\n"
+        "После оплаты тариф включится автоматически.",
+        parse_mode="HTML",
+    )
 
     await bot.send_invoice(
         chat_id=message.chat.id,
@@ -168,7 +186,12 @@ async def successful_payment_handler(message: Message) -> None:
         f"Тариф: <b>{plan_display_name(plan)}</b>\n"
         f"Срок: <code>30 дней</code>\n"
         f"Действует до: <code>{expires_at}</code>\n\n"
-        "Теперь можно пользоваться расширенными возможностями.",
+        "<b>Что теперь доступно</b>\n"
+        "— больше запросов;\n"
+        "— больше голосовых;\n"
+        "— DOCX/PDF документы;\n"
+        "— комфортная работа с проектами.\n\n"
+        "Начни с нижнего меню: 🧠 Ассистент, 🗂 Проекты или 📄 Документы.",
         reply_markup=main_keyboard(),
         parse_mode="HTML",
     )
