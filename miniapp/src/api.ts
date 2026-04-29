@@ -24,6 +24,8 @@ export type MiniAppDocument = {
   pdf_size_bytes: number;
   docx_size_text: string;
   pdf_size_text: string;
+  download_docx_url?: string | null;
+  download_pdf_url?: string | null;
   created_at: string;
   created_text: string;
   updated_at: string;
@@ -71,14 +73,19 @@ export type MiniAppData = {
   latest_documents?: MiniAppDocument[];
 };
 
-export async function loadMiniAppData(initData: string): Promise<MiniAppData | null> {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
+function apiBaseUrl(): string | null {
+  const value = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  return value ? value.replace(/\/$/, "") : null;
+}
 
-  if (!apiBaseUrl) {
+export async function loadMiniAppData(initData: string): Promise<MiniAppData | null> {
+  const baseUrl = apiBaseUrl();
+
+  if (!baseUrl) {
     return null;
   }
 
-  const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/miniapp/me`, {
+  const response = await fetch(`${baseUrl}/api/miniapp/me`, {
     method: "GET",
     headers: {
       Authorization: `tma ${initData}`,
@@ -91,4 +98,73 @@ export async function loadMiniAppData(initData: string): Promise<MiniAppData | n
   }
 
   return (await response.json()) as MiniAppData;
+}
+
+export async function downloadDocumentFile(
+  documentId: number,
+  format: "docx" | "pdf",
+  initData: string,
+  fallbackTitle: string
+): Promise<void> {
+  const baseUrl = apiBaseUrl();
+
+  if (!baseUrl) {
+    throw new Error("API base URL is not configured");
+  }
+
+  const response = await fetch(`${baseUrl}/api/documents/${documentId}/download?format=${format}`, {
+    method: "GET",
+    headers: {
+      Authorization: `tma ${initData}`
+    }
+  });
+
+  if (!response.ok) {
+    let message = "Не удалось скачать файл.";
+
+    try {
+      const data = (await response.json()) as { message?: string };
+      if (data.message) {
+        message = data.message;
+      }
+    } catch {
+      // ignore non-json error bodies
+    }
+
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filename = extractFilename(disposition) || safeFilename(`${fallbackTitle}.${format}`);
+
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function extractFilename(contentDisposition: string): string | null {
+  const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encodedMatch?.[1]) {
+    return decodeURIComponent(encodedMatch[1]);
+  }
+
+  const regularMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  if (regularMatch?.[1]) {
+    return regularMatch[1];
+  }
+
+  return null;
+}
+
+function safeFilename(value: string): string {
+  return value
+    .replace(/[^\wа-яА-ЯёЁ.-]+/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 96);
 }

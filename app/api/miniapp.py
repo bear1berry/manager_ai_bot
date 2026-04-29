@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
+import re
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -10,7 +14,7 @@ from app.services.limits import get_plan_limits, plan_display_name
 from app.services.miniapp_auth import extract_user_from_init_data, verify_telegram_init_data
 from app.services.payments import format_plan_expiry
 from app.storage.db import connect_db
-from app.storage.repositories import UserRepository
+from app.storage.repositories import DocumentRepository, UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,43 @@ def _get_init_data(request: web.Request) -> str:
         return header_value.strip()
 
     return request.query.get("initData", "").strip()
+
+
+async def _resolve_user_id_from_request(request: web.Request, settings: Settings) -> tuple[int | None, web.Response | None]:
+    init_data = _get_init_data(request)
+
+    if not verify_telegram_init_data(init_data=init_data, bot_token=settings.bot_token):
+        return None, _json_response(
+            {
+                "ok": False,
+                "error": "invalid_init_data",
+                "message": "Не удалось подтвердить Telegram Mini App initData.",
+            },
+            settings=settings,
+            status=401,
+        )
+
+    tg_user = extract_user_from_init_data(init_data)
+    if tg_user is None:
+        return None, _json_response(
+            {
+                "ok": False,
+                "error": "user_not_found_in_init_data",
+                "message": "В initData нет пользователя.",
+            },
+            settings=settings,
+            status=400,
+        )
+
+    async with await connect_db(settings.database_path) as db:
+        user = await UserRepository(db).upsert_user(
+            telegram_id=tg_user.telegram_id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+            last_name=tg_user.last_name,
+        )
+
+    return int(user["id"]), None
 
 
 async def miniapp_me_handler(request: web.Request) -> web.Response:
@@ -192,6 +233,140 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
     }
 
     return _json_response(payload, settings=settings)
+
+
+async def document_download_handler(request: web.Request) -> web.StreamResponse:
+    settings: Settings = request.app["settings"]
+
+    user_id, error_response = await _resolve_user_id_from_request(request, settings)
+    if error_response is not None or user_id is None:
+        return error_response or _json_response({"ok": False, "error": "unauthorized"}, settings=settings, status=401)
+
+    document_id_raw = request.match_info.get("document_id", "")
+    file_format = request.query.get("format", "docx").strip().lower()
+
+    if not document_id_raw.isdigit():
+        return _json_response(
+            {
+                "ok": False,
+                "error": "invalid_document_id",
+                "message": "Некорректный ID документа.",
+            },
+            settings=settings,
+            status=400,
+        )
+
+    if file_format not in {"docx", "pdf"}:
+        return _json_response(
+            {
+                "ok": False,
+                "error": "invalid_format",
+                "message": "Доступные форматы: docx или pdf.",
+            },
+            settings=settings,
+            status=400,
+        )
+
+    async with await connect_db(settings.database_path) as db:
+        document = await DocumentRepository(db).get_owned(
+            document_id=int(document_id_raw),
+            user_id=user_id,
+        )
+
+    if document is None:
+        return _json_response(
+            {
+                "ok": False,
+                "error": "document_not_found",
+                "message": "Документ не найден или принадлежит другому пользователю.",
+            },
+            settings=settings,
+            status=404,
+        )
+
+    raw_path = document["docx_path"] if file_format == "docx" else document["pdf_path"]
+    if not raw_path:
+        return _json_response(
+            {
+                "ok": False,
+                "error": "file_not_available",
+                "message": f"Файл {file_format.upper()} недоступен для этого документа.",
+            },
+            settings=settings,
+            status=404,
+        )
+
+    file_path = _safe_document_path(raw_path=raw_path, settings=settings)
+    if file_path is None or not file_path.exists() or not file_path.is_file():
+        return _json_response(
+            {
+                "ok": False,
+                "error": "file_missing",
+                "message": "Файл не найден на сервере. Собери документ заново или напиши администратору.",
+            },
+            settings=settings,
+            status=404,
+        )
+
+    if file_path.stat().st_size > settings.max_export_file_bytes:
+        return _json_response(
+            {
+                "ok": False,
+                "error": "file_too_large",
+                "message": "Файл превышает лимит Telegram/сервера.",
+            },
+            settings=settings,
+            status=413,
+        )
+
+    filename = _safe_download_filename(
+        title=str(document["title"]),
+        document_id=int(document["id"]),
+        extension=file_format,
+    )
+
+    content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    headers = _cors_headers(settings)
+    headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+
+    return web.FileResponse(
+        path=file_path,
+        headers=headers,
+        chunk_size=256 * 1024,
+    )
+
+
+def _safe_document_path(raw_path: str, settings: Settings) -> Path | None:
+    try:
+        exports_root = Path(settings.exports_dir).resolve()
+        candidate = Path(raw_path)
+
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+
+        resolved = candidate.resolve()
+
+        if exports_root != resolved and exports_root not in resolved.parents:
+            logger.warning("Blocked unsafe document path: %s", raw_path)
+            return None
+
+        return resolved
+    except Exception:
+        logger.exception("Failed to resolve document path: %s", raw_path)
+        return None
+
+
+def _safe_download_filename(title: str, document_id: int, extension: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Zа-яА-Я0-9._ -]+", "", title).strip()
+    cleaned = re.sub(r"\s+", "_", cleaned)
+
+    if not cleaned:
+        cleaned = "document"
+
+    if len(cleaned) > 80:
+        cleaned = cleaned[:80].rstrip("_")
+
+    return f"{cleaned}_{document_id}.{extension}"
 
 
 async def _count_today(db, user_id: int, kind: str) -> int:
@@ -370,6 +545,8 @@ async def _latest_documents(db, user_id: int, limit: int) -> list[dict[str, Any]
                 "pdf_size_bytes": pdf_size,
                 "docx_size_text": _format_bytes(docx_size),
                 "pdf_size_text": _format_bytes(pdf_size),
+                "download_docx_url": f"/api/documents/{int(row['id'])}/download?format=docx" if has_docx else None,
+                "download_pdf_url": f"/api/documents/{int(row['id'])}/download?format=pdf" if has_pdf else None,
                 "created_at": row["created_at"],
                 "created_text": _format_date(row["created_at"]),
                 "updated_at": row["updated_at"],
@@ -421,6 +598,8 @@ def _demo_payload() -> dict[str, Any]:
             "pdf_size_bytes": 124000,
             "docx_size_text": "38 КБ",
             "pdf_size_text": "121 КБ",
+            "download_docx_url": "/api/documents/1/download?format=docx",
+            "download_pdf_url": "/api/documents/1/download?format=pdf",
             "created_at": "demo",
             "created_text": "сегодня",
             "updated_at": "demo",
@@ -438,6 +617,8 @@ def _demo_payload() -> dict[str, Any]:
             "pdf_size_bytes": 0,
             "docx_size_text": "41 КБ",
             "pdf_size_text": "—",
+            "download_docx_url": "/api/documents/2/download?format=docx",
+            "download_pdf_url": None,
             "created_at": "demo",
             "created_text": "вчера",
             "updated_at": "demo",
@@ -493,9 +674,11 @@ def create_miniapp_api_app(settings: Settings) -> web.Application:
 
     app.router.add_route("OPTIONS", "/api/health", options_handler)
     app.router.add_route("OPTIONS", "/api/miniapp/me", options_handler)
+    app.router.add_route("OPTIONS", "/api/documents/{document_id}/download", options_handler)
 
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/miniapp/me", miniapp_me_handler)
+    app.router.add_get("/api/documents/{document_id}/download", document_download_handler)
 
     return app
 

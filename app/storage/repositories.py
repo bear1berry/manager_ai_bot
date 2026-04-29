@@ -288,6 +288,19 @@ class DocumentRepository:
         )
         return await cursor.fetchall()
 
+    async def get_owned(self, document_id: int, user_id: int) -> aiosqlite.Row | None:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM documents
+            WHERE id = ?
+              AND user_id = ?
+            LIMIT 1
+            """,
+            (document_id, user_id),
+        )
+        return await cursor.fetchone()
+
     async def count(self, user_id: int) -> int:
         cursor = await self.db.execute(
             "SELECT COUNT(*) FROM documents WHERE user_id = ?",

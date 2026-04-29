@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { loadMiniAppData, type MiniAppData, type MiniAppDocument, type MiniAppProject } from "./api";
+import {
+  downloadDocumentFile,
+  loadMiniAppData,
+  type MiniAppData,
+  type MiniAppDocument,
+  type MiniAppProject
+} from "./api";
 
 type TelegramWebApp = {
   ready: () => void;
@@ -101,6 +107,8 @@ const fallbackData: MiniAppData = {
       pdf_size_bytes: 124000,
       docx_size_text: "38 КБ",
       pdf_size_text: "121 КБ",
+      download_docx_url: "/api/documents/1/download?format=docx",
+      download_pdf_url: "/api/documents/1/download?format=pdf",
       created_at: "demo",
       created_text: "сегодня",
       updated_at: "demo"
@@ -118,6 +126,8 @@ const fallbackData: MiniAppData = {
       pdf_size_bytes: 0,
       docx_size_text: "41 КБ",
       pdf_size_text: "—",
+      download_docx_url: "/api/documents/2/download?format=docx",
+      download_pdf_url: null,
       created_at: "demo",
       created_text: "вчера",
       updated_at: "demo"
@@ -236,7 +246,7 @@ function App() {
 
         {!loading && activeTab === "home" && <HomeScreen data={data} />}
         {!loading && activeTab === "projects" && <ProjectsScreen data={data} />}
-        {!loading && activeTab === "docs" && <DocumentsScreen data={data} />}
+        {!loading && activeTab === "docs" && <DocumentsScreen data={data} initData={webApp?.initData || ""} />}
         {!loading && activeTab === "subscription" && <SubscriptionScreen data={data} />}
         {!loading && activeTab === "demo" && <DemoScreen />}
       </section>
@@ -331,7 +341,7 @@ function ProjectsScreen({ data }: { data: MiniAppData }) {
   );
 }
 
-function DocumentsScreen({ data }: { data: MiniAppData }) {
+function DocumentsScreen({ data, initData }: { data: MiniAppData; initData: string }) {
   const documents = data.latest_documents || data.documents || [];
 
   return (
@@ -365,7 +375,7 @@ function DocumentsScreen({ data }: { data: MiniAppData }) {
       ) : (
         <div className="document-history">
           {documents.map((document) => (
-            <DocumentCard key={document.id} document={document} />
+            <DocumentCard key={document.id} document={document} initData={initData} />
           ))}
         </div>
       )}
@@ -466,7 +476,23 @@ function ProjectCard({ project }: { project: MiniAppProject }) {
   );
 }
 
-function DocumentCard({ document }: { document: MiniAppDocument }) {
+function DocumentCard({ document, initData }: { document: MiniAppDocument; initData: string }) {
+  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [errorText, setErrorText] = useState("");
+
+  async function handleDownload(format: "docx" | "pdf") {
+    setStatus("loading");
+    setErrorText("");
+
+    try {
+      await downloadDocumentFile(document.id, format, initData, document.title);
+      setStatus("idle");
+    } catch (error) {
+      setStatus("error");
+      setErrorText(error instanceof Error ? error.message : "Не удалось скачать файл.");
+    }
+  }
+
   return (
     <article className="history-document-card">
       <div className="history-document-top">
@@ -487,12 +513,14 @@ function DocumentCard({ document }: { document: MiniAppDocument }) {
         <span>ID #{document.id}</span>
       </div>
 
-      <div className="document-card-actions">
-        <button type="button" onClick={() => sendToBot("documents")}>
-          Новый
+      {status === "error" && <div className="download-error">{errorText}</div>}
+
+      <div className="document-card-actions download-actions">
+        <button type="button" disabled={!document.has_docx || status === "loading"} onClick={() => handleDownload("docx")}>
+          {status === "loading" ? "..." : "DOCX"}
         </button>
-        <button type="button" onClick={() => sendToBot(`document_${document.id}`)}>
-          Открыть
+        <button type="button" disabled={!document.has_pdf || status === "loading"} onClick={() => handleDownload("pdf")}>
+          {status === "loading" ? "..." : "PDF"}
         </button>
       </div>
     </article>

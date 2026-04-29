@@ -612,3 +612,18 @@ h2 {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+.download-actions button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.download-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  color: #ffd3d3;
+  background: rgba(255, 82, 82, 0.12);
+  font-size: 13px;
+  line-height: 1.45;
+}
