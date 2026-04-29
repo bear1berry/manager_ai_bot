@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -11,6 +12,14 @@ class DialogueAction:
     title: str
     needs_web: bool
     prompt_hint: str
+
+
+@dataclass(frozen=True)
+class DocumentFollowupIntent:
+    should_generate: bool
+    doc_type: str
+    title: str
+    human_title: str
 
 
 FOLLOWUP_MARKERS = [
@@ -67,6 +76,36 @@ WEB_FOLLOWUP_MARKERS = [
     "что нового по этому",
 ]
 
+DOCUMENT_FOLLOWUP_MARKERS = [
+    "сделай это документом",
+    "оформи это документом",
+    "сделай документом",
+    "оформи документом",
+    "сделай документ",
+    "оформи документ",
+    "собери документ",
+    "сделай файлом",
+    "собери файлом",
+    "в файл",
+    "файлом",
+    "сделай docx",
+    "сделай pdf",
+    "оформи в docx",
+    "оформи в pdf",
+    "сделай из этого документ",
+    "сделай из этого файл",
+    "сделай из этого docx",
+    "сделай из этого pdf",
+    "сделай из этого кп",
+    "сделай из этого коммерческое предложение",
+    "сделай из этого план",
+    "сделай из этого план работ",
+    "сделай из этого чек-лист",
+    "сделай из этого чеклист",
+    "сделай из этого резюме",
+    "сделай из этого резюме встречи",
+]
+
 SHORT_FOLLOWUP_PATTERNS = [
     r"^продолжи[.!?]*$",
     r"^продолжай[.!?]*$",
@@ -84,6 +123,12 @@ SHORT_FOLLOWUP_PATTERNS = [
     r"^добавь дерзости[.!?]*$",
     r"^проверь в сети[.!?]*$",
     r"^проверь это в сети[.!?]*$",
+    r"^сделай документом[.!?]*$",
+    r"^сделай это документом[.!?]*$",
+    r"^оформи документом[.!?]*$",
+    r"^сделай файлом[.!?]*$",
+    r"^сделай docx[.!?]*$",
+    r"^сделай pdf[.!?]*$",
 ]
 
 
@@ -111,9 +156,62 @@ def detect_dialogue_action(text: str) -> DialogueAction:
     )
 
 
+def detect_document_followup_intent(text: str, action: DialogueAction) -> DocumentFollowupIntent:
+    lower = re.sub(r"\s+", " ", text.strip().lower())
+
+    should_generate = action.action == "document" or any(marker in lower for marker in DOCUMENT_FOLLOWUP_MARKERS)
+
+    if not should_generate:
+        return DocumentFollowupIntent(
+            should_generate=False,
+            doc_type="meeting_summary",
+            title="Документ по диалогу",
+            human_title="Документ",
+        )
+
+    if "кп" in lower or "коммерческое предложение" in lower:
+        return DocumentFollowupIntent(
+            should_generate=True,
+            doc_type="commercial_offer",
+            title="Коммерческое предложение по диалогу",
+            human_title="Коммерческое предложение",
+        )
+
+    if "план работ" in lower or "план" in lower:
+        return DocumentFollowupIntent(
+            should_generate=True,
+            doc_type="work_plan",
+            title="План работ по диалогу",
+            human_title="План работ",
+        )
+
+    if "чек-лист" in lower or "чеклист" in lower or "checklist" in lower:
+        return DocumentFollowupIntent(
+            should_generate=True,
+            doc_type="checklist",
+            title="Чек-лист по диалогу",
+            human_title="Чек-лист",
+        )
+
+    if "резюме встречи" in lower or "резюме" in lower or "протокол" in lower:
+        return DocumentFollowupIntent(
+            should_generate=True,
+            doc_type="meeting_summary",
+            title="Резюме по диалогу",
+            human_title="Резюме",
+        )
+
+    return DocumentFollowupIntent(
+        should_generate=True,
+        doc_type="meeting_summary",
+        title="Документ по диалогу",
+        human_title="Документ",
+    )
+
+
 def build_dialogue_prompt(
     user_text: str,
-    history: list[dict[str, str]],
+    history: list[Any],
     action: DialogueAction,
 ) -> str:
     if not action.is_followup:
@@ -135,9 +233,52 @@ def build_dialogue_prompt(
     )
 
 
+def build_document_source_from_dialogue(
+    user_text: str,
+    history: list[Any],
+    document_intent: DocumentFollowupIntent,
+    web_context: str = "",
+    project_context: str = "",
+) -> str:
+    compact_history = _format_history(history, max_chars=9000)
+
+    web_block = ""
+    if web_context:
+        web_block = (
+            "\nАктуальный web-контекст:\n"
+            f"{web_context}\n"
+        )
+
+    project_block = ""
+    if project_context:
+        project_block = (
+            "\nКонтекст проектов пользователя:\n"
+            f"{project_context}\n"
+        )
+
+    return (
+        "Нужно подготовить документ на основе предыдущего диалога пользователя с ассистентом.\n\n"
+        f"Тип документа: {document_intent.human_title}\n"
+        f"Рабочее название: {document_intent.title}\n\n"
+        "Команда пользователя:\n"
+        f"{user_text}\n\n"
+        "История диалога:\n"
+        f"{compact_history}\n"
+        f"{project_block}"
+        f"{web_block}\n"
+        "Требования к документу:\n"
+        "- опираться на историю диалога и команду пользователя;\n"
+        "- не выдумывать факты, сроки, цены и участников;\n"
+        "- если данных мало — явно указать допущения или открытые вопросы;\n"
+        "- структура должна быть пригодна для DOCX/PDF;\n"
+        "- стиль деловой, аккуратный, без случайных шуток;\n"
+        "- документ должен быть полезным как готовый рабочий артефакт."
+    )
+
+
 def build_search_text_for_dialogue(
     user_text: str,
-    history: list[dict[str, str]],
+    history: list[Any],
     action: DialogueAction,
 ) -> str:
     if not action.needs_web:
@@ -204,11 +345,11 @@ def _action_for_text(lower: str, needs_web: bool) -> DialogueAction:
         return DialogueAction(
             is_followup=True,
             action="document",
-            title="Подготовка к документу",
+            title="Документ из диалога",
             needs_web=needs_web,
             prompt_hint=(
                 "Подготовь предыдущий материал к оформлению в документ: структура, заголовки, разделы, "
-                "что войдёт в DOCX/PDF. Если прямой генерации файла нет в этом сценарии — дай готовую структуру."
+                "что войдёт в DOCX/PDF."
             ),
         )
 
@@ -247,15 +388,15 @@ def _action_for_text(lower: str, needs_web: bool) -> DialogueAction:
     )
 
 
-def _format_history(history: list[dict[str, str]], max_chars: int = 5000) -> str:
+def _format_history(history: list[Any], max_chars: int = 5000) -> str:
     if not history:
         return "Истории пока нет."
 
     lines: list[str] = []
 
-    for item in history[-12:]:
-        role = item.get("role", "unknown")
-        content = str(item.get("content", "")).strip()
+    for item in history[-14:]:
+        role = _get_value(item, "role", "unknown")
+        content = str(_get_value(item, "content", "") or "").strip()
 
         if not content:
             continue
@@ -269,6 +410,16 @@ def _format_history(history: list[dict[str, str]], max_chars: int = 5000) -> str
         formatted = formatted[-max_chars:]
 
     return formatted or "Истории пока нет."
+
+
+def _get_value(item: Any, key: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+
+    try:
+        return item[key]
+    except Exception:
+        return getattr(item, key, default)
 
 
 def _matches_any_pattern(text: str, patterns: list[str]) -> bool:

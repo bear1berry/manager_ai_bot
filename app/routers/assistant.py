@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 from pathlib import Path
 from uuid import uuid4
@@ -7,14 +8,17 @@ from uuid import uuid4
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import FSInputFile, Message
 
 from app.bot.keyboards import feedback_keyboard, main_keyboard, modes_keyboard
 from app.config import get_settings
+from app.services.documents import DocumentService
 from app.services.dialogue import (
     build_dialogue_prompt,
+    build_document_source_from_dialogue,
     build_search_text_for_dialogue,
     detect_dialogue_action,
+    detect_document_followup_intent,
 )
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
@@ -34,6 +38,7 @@ from app.services.users import ensure_user
 from app.services.web_search import WebSearchBundle, WebSearchService
 from app.storage.db import connect_db
 from app.storage.repositories import (
+    DocumentRepository,
     MessageRepository,
     ProjectRepository,
     QueueRepository,
@@ -247,6 +252,14 @@ def _dialogue_status_text(is_followup: bool, title: str) -> str:
     return (
         "\n\n💬 <b>Понял продолжение диалога</b>\n"
         f"Действие: <code>{title}</code>."
+    )
+
+
+def _document_status_text(human_title: str) -> str:
+    return (
+        "\n\n📄 <b>Документ из диалога</b>\n"
+        f"Тип: <code>{html.escape(human_title)}</code>.\n"
+        "Собираю DOCX/PDF по предыдущему контексту."
     )
 
 
@@ -465,11 +478,12 @@ async def _process_text_request(
 
         history = await msg_repo.recent(user_id=user_db_id, limit=16)
         dialogue_action = detect_dialogue_action(text)
+        document_followup_intent = detect_document_followup_intent(text, dialogue_action)
         personality_decision = decide_personality(
             user_text=text,
             mode=intent.mode,
             is_group=False,
-            is_document=False,
+            is_document=document_followup_intent.should_generate,
         )
 
         search_text = build_search_text_for_dialogue(
@@ -496,6 +510,26 @@ async def _process_text_request(
     web_service = WebSearchService(settings)
     web_bundle = await web_service.search_if_needed(search_text)
     web_context = web_service.build_context(web_bundle)
+
+    if document_followup_intent.should_generate:
+        await message.answer(
+            telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context)))
+            + _dialogue_status_text(dialogue_action.is_followup, dialogue_action.title)
+            + _web_status_text(web_bundle)
+            + _document_status_text(document_followup_intent.human_title),
+            parse_mode="HTML",
+        )
+
+        await _handle_direct_document_followup(
+            message=message,
+            user_db_id=user_db_id,
+            history=history,
+            user_text=text,
+            document_intent=document_followup_intent,
+            web_context=web_context,
+            project_context=project_context,
+        )
+        return
 
     dialogue_prompt = build_dialogue_prompt(
         user_text=text,
@@ -551,4 +585,110 @@ async def _process_text_request(
             sources_html,
             parse_mode="HTML",
             disable_web_page_preview=True,
+        )
+
+
+
+async def _handle_direct_document_followup(
+    message: Message,
+    user_db_id: int,
+    history,
+    user_text: str,
+    document_intent,
+    web_context: str,
+    project_context: str,
+) -> None:
+    settings = get_settings()
+
+    meaningful_history = []
+    for item in history[-10:]:
+        try:
+            content = str(item["content"] or "").strip()
+        except Exception:
+            content = ""
+        if content:
+            meaningful_history.append(content)
+
+    if not meaningful_history:
+        await message.answer(
+            "⚠️ <b>Пока нечего оформлять в документ</b>\n\n"
+            "Сначала дай материал или попроси меня что-то разобрать, а потом напиши:\n"
+            "<code>сделай это документом</code>.",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    source_text = build_document_source_from_dialogue(
+        user_text=user_text,
+        history=history,
+        document_intent=document_intent,
+        web_context=web_context,
+        project_context=project_context,
+    )
+
+    try:
+        llm = LLMService(settings)
+        document_data = await llm.generate_document_data(
+            source_text=source_text,
+            doc_type=document_intent.doc_type,
+            title=document_intent.title,
+        )
+
+        service = DocumentService(settings)
+        generated = service.generate_from_data(
+            data=document_data,
+            fallback_title=document_intent.title,
+        )
+
+        document_title = str(document_data.get("title") or document_intent.title)
+
+        async with await connect_db(settings.database_path) as db:
+            await DocumentRepository(db).create(
+                user_id=user_db_id,
+                doc_type=document_intent.doc_type,
+                title=document_title,
+                docx_path=str(generated.docx_path),
+                pdf_path=str(generated.pdf_path) if generated.pdf_path else None,
+                status="created",
+            )
+
+        await message.answer(
+            "✅ <b>Документ из диалога готов</b>\n\n"
+            f"Название: <b>{html.escape(document_title)}</b>\n\n"
+            "Файлы отправляю ниже. История документа доступна в Mini App.",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+
+        await message.answer_document(
+            FSInputFile(generated.docx_path),
+            caption=f"📄 {document_title} / DOCX",
+        )
+
+        if generated.pdf_path and Path(generated.pdf_path).exists():
+            await message.answer_document(
+                FSInputFile(generated.pdf_path),
+                caption=f"📄 {document_title} / PDF",
+            )
+
+        async with await connect_db(settings.database_path) as db:
+            await MessageRepository(db).add(
+                user_id=user_db_id,
+                role="assistant",
+                content=f"Документ из диалога создан: {document_title}",
+            )
+
+    except Exception:
+        logger.exception("Direct document follow-up generation failed")
+        await message.answer(
+            "⚠️ <b>Не удалось собрать документ из диалога</b>\n\n"
+            "<b>Что случилось</b>\n"
+            "Во время генерации DOCX/PDF произошла ошибка.\n\n"
+            "<b>Что сделать</b>\n"
+            "— попробуй сначала попросить меня сделать структуру;\n"
+            "— затем напиши <code>сделай это документом</code>;\n"
+            "— если ошибка повторится, проверь логи приложения.",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
         )
