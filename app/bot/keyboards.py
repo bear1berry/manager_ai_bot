@@ -1,6 +1,20 @@
 from __future__ import annotations
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+
+from app.config import get_settings
+
+
+def _mini_app_button() -> KeyboardButton:
+    settings = get_settings()
+
+    if settings.mini_app_url.strip():
+        return KeyboardButton(
+            text="🌐 Mini App",
+            web_app=WebAppInfo(url=settings.mini_app_url.strip()),
+        )
+
+    return KeyboardButton(text="🌐 Mini App")
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -9,6 +23,9 @@ def main_keyboard() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text="🧠 Режимы"),
                 KeyboardButton(text="👤 Профиль"),
+            ],
+            [
+                _mini_app_button(),
             ],
         ],
         resize_keyboard=True,
