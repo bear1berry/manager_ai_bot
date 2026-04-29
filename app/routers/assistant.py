@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
-from app.bot.keyboards import assistant_keyboard, feedback_keyboard, main_keyboard
+from app.bot.keyboards import feedback_keyboard, main_keyboard, modes_keyboard
 from app.config import get_settings
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
@@ -41,6 +41,19 @@ class AssistantStates(StatesGroup):
 
 
 MODE_BY_BUTTON = {
+    "🌍 Универсальный": {
+        "mode": "assistant",
+        "title": "Универсальный",
+        "hint": (
+            "Это главный режим бота — рабочий мозг под любые задачи.\n\n"
+            "Можно писать как угодно: коротко, хаотично, голосом из головы, списком, куском переписки или одной фразой.\n\n"
+            "Я сам определю формат: анализ, план, стратегия, текст, идея, решение, инструкция или структурный разбор."
+        ),
+        "example": (
+            "Хочу запустить Telegram-бота для менеджеров, но пока не понимаю, "
+            "как упаковать ценность, кому продавать и что показывать первым пользователям."
+        ),
+    },
     "✍️ Ответ клиенту": {
         "mode": "client_reply",
         "title": "Ответ клиенту",
@@ -57,7 +70,7 @@ MODE_BY_BUTTON = {
         "mode": "chaos",
         "title": "Разбор хаоса",
         "hint": (
-            "Отправь любые сырые мысли, голос из головы, список проблем или кусок переписки.\n\n"
+            "Отправь любые сырые мысли, список проблем, ситуацию или кусок переписки.\n\n"
             "Я разложу это на смысл, задачи, риски и следующий шаг."
         ),
         "example": (
@@ -83,12 +96,17 @@ SERVICE_BUTTONS = {
     "⬅️ Назад",
     "👍 Полезно",
     "👎 Не то",
-    "📄 Документы",
-    "🗂 Проекты",
+    "🧠 Режимы",
+    "🧠 Ассистент",
     "👤 Профиль",
+    "📊 Лимиты",
+    "📈 Активность",
     "💎 Подписка",
     "💎 Pro",
     "🏢 Business",
+    "📄 Документы",
+    "🗂 Проекты",
+    "🚀 Демо",
     "➕ Новый проект",
     "📚 Мои проекты",
     "🔎 Найти проект",
@@ -98,22 +116,31 @@ SERVICE_BUTTONS = {
     "📋 План работ",
     "📝 Резюме встречи",
     "✅ Чек-лист",
+    "🧾 Демо: хаос",
+    "🗂 Демо: проект",
+    "📄 Демо: документ",
+    "✅ Демо: что дальше",
 }
 
 
-@router.message(F.text == "🧠 Ассистент")
+@router.message(F.text.in_({"🧠 Режимы", "🧠 Ассистент"}))
 async def assistant_menu_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        "🧠 <b>Ассистент</b>\n\n"
-        "Выбери быстрый режим или просто напиши задачу обычным сообщением.\n\n"
-        "<b>Режимы</b>\n"
-        "— ✍️ Ответ клиенту — деловой ответ без оправданий;\n"
+        "🧠 <b>Режимы</b>\n\n"
+        "Выбери сценарий или просто напиши задачу. Если не знаешь, какой режим нужен — жми <b>🌍 Универсальный</b>.\n\n"
+        "🌍 <b>Универсальный</b>\n"
+        "Главный режим под любые запросы: стратегия, текст, анализ, идеи, обучение, решения, личные планы, рабочие задачи.\n\n"
+        "⚡ <b>Точечные режимы</b>\n"
+        "— ✍️ Ответ клиенту — готовый деловой ответ;\n"
         "— 🧾 Разобрать хаос — мысли → структура;\n"
-        "— 📌 Сделать план — цель → действия.\n\n"
-        "Я также умею сам определить сценарий по тексту. "
-        "Если вопрос похож на проектный — подмешаю контекст из 🗂 Проекты.",
-        reply_markup=assistant_keyboard(),
+        "— 📌 Сделать план — цель → шаги.\n\n"
+        "🧩 <b>Рабочие разделы</b>\n"
+        "— 🗂 Проекты — память по клиентам и задачам;\n"
+        "— 📄 Документы — DOCX/PDF;\n"
+        "— 🚀 Демо — быстрый показ возможностей.\n\n"
+        "Минимум интерфейса. Максимум мозга.",
+        reply_markup=modes_keyboard(),
         parse_mode="HTML",
     )
 
@@ -140,7 +167,7 @@ async def voice_handler(message: Message, bot: Bot) -> None:
         )
 
         if not result.allowed:
-            await message.answer(limit_message(result), reply_markup=main_keyboard(), parse_mode="Markdown")
+            await message.answer(limit_message(result), reply_markup=main_keyboard(), parse_mode="HTML")
             return
 
         voice = message.voice
@@ -173,7 +200,7 @@ async def voice_handler(message: Message, bot: Bot) -> None:
     if inserted:
         await message.answer(
             "🎧 Голосовое поставил в очередь.\n\n"
-            "Сейчас разберу и верну структуру: задачи, риски и следующий шаг.",
+            "Сейчас разберу и верну структуру: смысл, задачи, риски и следующий шаг.",
             reply_markup=main_keyboard(),
         )
     else:
@@ -199,7 +226,7 @@ async def fast_mode_handler(message: Message, state: FSMContext) -> None:
         "<b>Пример</b>\n"
         f"<code>{mode_data['example']}</code>\n\n"
         "Чтобы выйти из режима — нажми ⬅️ Назад.",
-        reply_markup=assistant_keyboard(),
+        reply_markup=modes_keyboard(),
         parse_mode="HTML",
     )
 
@@ -295,7 +322,7 @@ async def _process_text_request(
             await message.answer(
                 limit_message(limit_result),
                 reply_markup=main_keyboard(),
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             return
 
