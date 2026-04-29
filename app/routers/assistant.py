@@ -19,6 +19,11 @@ from app.services.dialogue import (
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
+from app.services.personality import (
+    build_personality_instruction,
+    decide_personality,
+    personality_status_text,
+)
 from app.services.projects import (
     build_projects_context,
     build_prompt_with_project_context,
@@ -460,6 +465,12 @@ async def _process_text_request(
 
         history = await msg_repo.recent(user_id=user_db_id, limit=16)
         dialogue_action = detect_dialogue_action(text)
+        personality_decision = decide_personality(
+            user_text=text,
+            mode=intent.mode,
+            is_group=False,
+            is_document=False,
+        )
 
         search_text = build_search_text_for_dialogue(
             user_text=text,
@@ -502,10 +513,15 @@ async def _process_text_request(
             "=== END WEB SEARCH CONTEXT ==="
         )
 
+    personality_instruction = build_personality_instruction(personality_decision)
+    if personality_instruction:
+        enriched_text = f"{enriched_text}\n\n{personality_instruction}"
+
     await message.answer(
         telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context)))
         + _dialogue_status_text(dialogue_action.is_followup, dialogue_action.title)
-        + _web_status_text(web_bundle),
+        + _web_status_text(web_bundle)
+        + personality_status_text(personality_decision),
         parse_mode="HTML",
     )
 

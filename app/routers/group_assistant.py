@@ -17,7 +17,13 @@ from app.services.documents import DocumentService
 from app.services.intents import IntentResult, detect_intent
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
+from app.services.personality import (
+    build_personality_instruction,
+    decide_personality,
+    personality_status_text,
+)
 from app.services.users import ensure_user
+from app.services.web_search import WebSearchBundle, WebSearchService
 from app.storage.db import connect_db
 from app.storage.repositories import DocumentRepository, UsageRepository, UserRepository
 from app.utils.text import split_long_text, telegram_html_from_ai_text
@@ -68,19 +74,18 @@ def _group_help_text(bot_username: str) -> str:
 
     return (
         "👥 <b>Групповой GPT</b>\n\n"
-        "Я работаю в группе как универсальный AI-ассистент с контекстом переписки.\n\n"
+        "Я работаю в группе как универсальный AI-ассистент с контекстом переписки и web-поиском.\n\n"
         "<b>Можно просить что угодно</b>\n"
         f"<code>{mention} подведи итоги за сегодня</code>\n"
+        f"<code>{mention} найди свежие данные по Telegram Stars</code>\n"
         f"<code>{mention} придумай 5 идей на основе переписки</code>\n"
         f"<code>{mention} напиши ответ клиенту по нашему обсуждению</code>\n"
         f"<code>{mention} разложи спор и найди слабые места</code>\n"
-        f"<code>{mention} сделай план действий на завтра</code>\n"
-        f"<code>{mention} объясни простыми словами, что мы тут обсуждаем</code>\n\n"
+        f"<code>{mention} сделай план действий на завтра</code>\n\n"
         "<b>Документы из переписки</b>\n"
         f"<code>{mention} сделай отчет по переписке за сегодня</code>\n"
         f"<code>{mention} оформи протокол по всей переписке</code>\n"
-        f"<code>{mention} собери план действий файлом за последние 3 часа</code>\n"
-        f"<code>{mention} сделай DOCX/PDF по обсуждению</code>\n\n"
+        f"<code>{mention} собери план действий файлом за последние 3 часа</code>\n\n"
         "<b>Область контекста</b>\n"
         f"<code>{mention} ... за предыдущий час</code>\n"
         f"<code>{mention} ... за последние 3 часа</code>\n"
@@ -93,9 +98,7 @@ def _group_help_text(bot_username: str) -> str:
         "— <code>/group_clear</code> — очистить память.\n\n"
         "<b>Важно</b>\n"
         "Я не вижу старую историю Telegram до момента включения памяти. "
-        "Анализирую только то, что успел сохранить.\n\n"
-        "Чтобы я видел обычные сообщения группы, в BotFather нужно отключить privacy mode:\n"
-        "<code>/setprivacy → Disable</code>."
+        "Анализирую только то, что успел сохранить."
     )
 
 
@@ -373,10 +376,35 @@ def _group_document_status_text(document_intent: GroupDocumentIntent, selection:
     )
 
 
+def _web_status_text(bundle: WebSearchBundle) -> str:
+    if not bundle.requested:
+        return ""
+
+    if not bundle.enabled:
+        return (
+            "\n\n🌐 <b>Web-поиск запрошен, но отключён</b>\n"
+            "Включи <code>WEB_SEARCH_ENABLED=true</code> и добавь API-ключ поиска."
+        )
+
+    if bundle.has_results:
+        return (
+            "\n\n🌐 <b>Нашёл данные в сети</b>\n"
+            f"Источник: <code>{bundle.provider}</code>. "
+            f"Результатов: <code>{len(bundle.results)}</code>."
+        )
+
+    return (
+        "\n\n🌐 <b>Поиск выполнен, но результатов нет</b>\n"
+        "Отвечу осторожно и не буду выдумывать свежие факты."
+    )
+
+
 def _build_group_prompt(
     query: str,
     reply_context: str,
     memory_context: str,
+    web_context: str,
+    personality_instruction: str,
     chat_title: str | None,
     memory_enabled: bool,
     selection: MemorySelection,
@@ -409,6 +437,13 @@ def _build_group_prompt(
             "Память группы выключена. Не делай вид, что видишь историю группы.\n\n"
         )
 
+    web_block = ""
+    if web_context:
+        web_block = (
+            "Актуальный web-контекст:\n"
+            f"{web_context}\n\n"
+        )
+
     reply_block = ""
     if reply_context:
         reply_block = (
@@ -416,9 +451,14 @@ def _build_group_prompt(
             f"{reply_context}\n\n"
         )
 
+    personality_block = ""
+    if personality_instruction:
+        personality_block = f"{personality_instruction}\n\n"
+
     universal_rules = (
         "Правила ответа:\n"
         "- отвечай именно на запрос пользователя, а не только делай сводку;\n"
+        "- если пользователь просит актуальные данные — используй web-контекст;\n"
         "- если пользователь просит сводку — дай сводку;\n"
         "- если просит идею — дай идеи;\n"
         "- если просит план — дай план;\n"
@@ -427,7 +467,7 @@ def _build_group_prompt(
         "- если просит спор/конфликт — разложи позиции и слабые места;\n"
         "- если просит решение — предложи варианты и выбери лучший;\n"
         "- используй переписку как контекст, но не выдумывай факты;\n"
-        "- если данных в переписке мало — честно скажи, чего не хватает;\n"
+        "- если данных в переписке или источниках мало — честно скажи, чего не хватает;\n"
         "- пиши по-русски, структурно, короткими блоками;\n"
         "- используй жирные заголовки и списки;\n"
         "- не используй странные символы и мусор;\n"
@@ -454,12 +494,13 @@ def _build_group_prompt(
             "**Что сделать дальше**\n"
         )
 
-    return base + memory_block + reply_block + universal_rules + output_format
+    return base + memory_block + web_block + reply_block + personality_block + universal_rules + output_format
 
 
 def _build_group_document_source(
     query: str,
     memory_context: str,
+    web_context: str,
     reply_context: str,
     chat_title: str | None,
     selection: MemorySelection,
@@ -475,6 +516,13 @@ def _build_group_document_source(
             f"{reply_context}\n"
         )
 
+    web_block = ""
+    if web_context:
+        web_block = (
+            "\nАктуальный web-контекст:\n"
+            f"{web_context}\n"
+        )
+
     return (
         "Нужно подготовить документ на основе переписки Telegram-группы.\n\n"
         f"Название группы: {title}\n"
@@ -485,9 +533,10 @@ def _build_group_document_source(
         f"{query}\n\n"
         "Переписка группы:\n"
         f"{memory_context or 'В выбранной области нет сохранённых сообщений.'}\n"
+        f"{web_block}"
         f"{reply_block}\n"
         "Требования к документу:\n"
-        "- опираться только на переписку и запрос пользователя;\n"
+        "- опираться только на переписку, web-контекст и запрос пользователя;\n"
         "- не выдумывать факты, участников, сроки и решения;\n"
         "- если данных мало — явно отметить это в разделе допущений или открытых вопросов;\n"
         "- структура должна быть пригодна для DOCX/PDF;\n"
@@ -770,9 +819,9 @@ async def group_on_handler(message: Message) -> None:
         "Теперь я буду сохранять сообщения, которые Telegram мне присылает, и использовать их как контекст для любых запросов.\n\n"
         "<b>Примеры</b>\n"
         "— <code>@bot подведи итоги за сегодня</code>\n"
+        "— <code>@bot найди свежие данные по Telegram Stars</code>\n"
         "— <code>@bot придумай идеи на основе переписки</code>\n"
         "— <code>@bot сделай план действий</code>\n"
-        "— <code>@bot напиши ответ клиенту</code>\n"
         "— <code>@bot сделай отчет по переписке</code>\n\n"
         "<b>Важно</b>\n"
         "Если счётчик сообщений не растёт, отключи privacy mode в BotFather:\n"
@@ -824,10 +873,10 @@ async def group_status_handler(message: Message) -> None:
         f"{warning}\n"
         "<b>Как использовать</b>\n"
         "— <code>@bot подведи итоги</code>\n"
+        "— <code>@bot найди свежие данные</code>\n"
         "— <code>@bot придумай идеи</code>\n"
         "— <code>@bot сделай план</code>\n"
-        "— <code>@bot сделай отчет по переписке</code>\n"
-        "— <code>@bot объясни, что мы обсуждаем</code>\n\n"
+        "— <code>@bot сделай отчет по переписке</code>\n\n"
         "<b>Контекст</b>\n"
         "— <code>за предыдущий час</code>\n"
         "— <code>за сегодня</code>\n"
@@ -900,6 +949,13 @@ async def group_text_router(message: Message, bot: Bot) -> None:
         selection=selection,
         chat_title=message.chat.title,
     )
+    personality_decision = decide_personality(
+        user_text=query,
+        mode=intent.mode,
+        is_group=True,
+        is_document=document_intent.should_generate,
+    )
+    personality_instruction = build_personality_instruction(personality_decision)
 
     async with await connect_db(settings.database_path) as db:
         memory_rows = await _latest_group_messages_by_selection(db, message.chat.id, selection)
@@ -919,6 +975,10 @@ async def group_text_router(message: Message, bot: Bot) -> None:
             parse_mode="HTML",
         )
         return
+
+    web_service = WebSearchService(settings)
+    web_bundle = await web_service.search_if_needed(query)
+    web_context = web_service.build_context(web_bundle)
 
     async with await connect_db(settings.database_path) as db:
         user_repo = UserRepository(db)
@@ -952,15 +1012,20 @@ async def group_text_router(message: Message, bot: Bot) -> None:
             user_id=user_db_id,
             query=query,
             memory_context=memory_context,
+            web_context=web_context,
             reply_context=reply_context,
             selection=selection,
             selected_count=selected_count,
             document_intent=document_intent,
+            web_service=web_service,
+            web_bundle=web_bundle,
         )
         return
 
     await message.answer(
-        _group_status_text(intent, selection, selected_count),
+        _group_status_text(intent, selection, selected_count)
+        + _web_status_text(web_bundle)
+        + personality_status_text(personality_decision),
         parse_mode="HTML",
     )
 
@@ -968,6 +1033,8 @@ async def group_text_router(message: Message, bot: Bot) -> None:
         query=query,
         reply_context=reply_context,
         memory_context=memory_context,
+        web_context=web_context,
+        personality_instruction=personality_instruction,
         chat_title=message.chat.title,
         memory_enabled=memory_enabled,
         selection=selection,
@@ -997,6 +1064,15 @@ async def group_text_router(message: Message, bot: Bot) -> None:
         await message.answer(
             telegram_html_from_ai_text(chunk),
             parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
+    sources_html = web_service.format_sources_html(web_bundle)
+    if sources_html:
+        await message.answer(
+            sources_html,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
         )
 
 
@@ -1006,19 +1082,23 @@ async def _handle_group_document_request(
     user_id: int,
     query: str,
     memory_context: str,
+    web_context: str,
     reply_context: str,
     selection: MemorySelection,
     selected_count: int,
     document_intent: GroupDocumentIntent,
+    web_service: WebSearchService,
+    web_bundle: WebSearchBundle,
 ) -> None:
     await message.answer(
-        _group_document_status_text(document_intent, selection, selected_count),
+        _group_document_status_text(document_intent, selection, selected_count) + _web_status_text(web_bundle),
         parse_mode="HTML",
     )
 
     source_text = _build_group_document_source(
         query=query,
         memory_context=memory_context,
+        web_context=web_context,
         reply_context=reply_context,
         chat_title=message.chat.title,
         selection=selection,
@@ -1069,6 +1149,14 @@ async def _handle_group_document_request(
             await message.answer_document(
                 FSInputFile(generated.pdf_path),
                 caption=f"📄 {document_title} / PDF",
+            )
+
+        sources_html = web_service.format_sources_html(web_bundle)
+        if sources_html:
+            await message.answer(
+                sources_html,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
             )
 
     except Exception:
