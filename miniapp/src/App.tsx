@@ -31,6 +31,7 @@ declare global {
 }
 
 type TabKey = "home" | "projects" | "docs" | "subscription" | "demo";
+type ApiStatus = "loading" | "live" | "demo" | "error";
 
 const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
   { key: "home", label: "Главная", icon: "⌁" },
@@ -152,11 +153,43 @@ function formatLimit(value: number): string {
   return String(value);
 }
 
+function statusLabel(status: ApiStatus): string {
+  if (status === "live") {
+    return "Синхронизировано";
+  }
+
+  if (status === "demo") {
+    return "Демо-режим";
+  }
+
+  if (status === "error") {
+    return "Нет связи";
+  }
+
+  return "Загрузка";
+}
+
+function statusDescription(status: ApiStatus): string {
+  if (status === "live") {
+    return "Кабинет получает реальные данные из backend API.";
+  }
+
+  if (status === "demo") {
+    return "Сейчас показаны демонстрационные данные. Подключи backend API для live-режима.";
+  }
+
+  if (status === "error") {
+    return "Mini App открыт, но backend API сейчас недоступен. Проверь туннель или сервер.";
+  }
+
+  return "Собираю данные кабинета.";
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("home");
   const [data, setData] = useState<MiniAppData>(fallbackData);
   const [loading, setLoading] = useState(true);
-  const [apiStatus, setApiStatus] = useState<"loading" | "live" | "demo" | "error">("loading");
+  const [apiStatus, setApiStatus] = useState<ApiStatus>("loading");
 
   const webApp = useMemo(() => getWebApp(), []);
   const telegramUser = webApp?.initDataUnsafe?.user;
@@ -216,14 +249,18 @@ function App() {
       <section className="hero-card">
         <div className="hero-topline">Telegram Mini App</div>
         <h1>Менеджер ИИ</h1>
-        <p>Премиальный рабочий кабинет для проектов, документов, подписки и быстрых AI-сценариев.</p>
+        <p>Рабочий кабинет для проектов, документов, подписки и быстрых AI-сценариев.</p>
 
-        <div className="user-chip">
-          <span className={apiStatus === "live" ? "pulse" : "pulse muted-pulse"} />
-          <span>{firstName}</span>
-          <span className="muted">
-            · {apiStatus === "live" ? "real data" : apiStatus === "error" ? "API offline" : "demo"}
-          </span>
+        <div className="hero-actions">
+          <div className="user-chip">
+            <span className={apiStatus === "live" ? "pulse" : apiStatus === "error" ? "pulse danger-pulse" : "pulse muted-pulse"} />
+            <span>{firstName}</span>
+            <span className="muted">· {statusLabel(apiStatus)}</span>
+          </div>
+
+          <button className="ghost-button" type="button" onClick={() => sendToBot("assistant")}>
+            Открыть чат
+          </button>
         </div>
       </section>
 
@@ -244,7 +281,7 @@ function App() {
       <section className="content-card">
         {loading && <div className="loading">Загружаю данные кабинета…</div>}
 
-        {!loading && activeTab === "home" && <HomeScreen data={data} />}
+        {!loading && activeTab === "home" && <HomeScreen data={data} apiStatus={apiStatus} />}
         {!loading && activeTab === "projects" && <ProjectsScreen data={data} />}
         {!loading && activeTab === "docs" && <DocumentsScreen data={data} initData={webApp?.initData || ""} />}
         {!loading && activeTab === "subscription" && <SubscriptionScreen data={data} />}
@@ -254,7 +291,10 @@ function App() {
   );
 }
 
-function HomeScreen({ data }: { data: MiniAppData }) {
+function HomeScreen({ data, apiStatus }: { data: MiniAppData; apiStatus: ApiStatus }) {
+  const textLimit = formatLimit(data.limits.text.limit);
+  const voiceLimit = formatLimit(data.limits.voice.limit);
+
   return (
     <>
       <div className="section-heading">
@@ -262,43 +302,56 @@ function HomeScreen({ data }: { data: MiniAppData }) {
         <h2>Рабочий центр</h2>
       </div>
 
-      <div className="metrics-grid">
-        <Metric title="Тариф" value={data.subscription.plan_name} caption={`до ${data.subscription.expires_text}`} />
-        <Metric title="Проекты" value={String(data.stats.projects_total)} caption="активная память" />
-        <Metric title="Документы" value={String(data.stats.documents_generated)} caption="создано файлов" />
+      <StatusPanel status={apiStatus} />
+
+      <div className="today-grid">
+        <TodayCard label="Тариф" value={data.subscription.plan_name} caption={`до ${data.subscription.expires_text}`} />
+        <TodayCard label="Текст" value={`${data.limits.text.used}/${textLimit}`} caption="лимит сегодня" />
+        <TodayCard label="Голос" value={`${data.limits.voice.used}/${voiceLimit}`} caption="лимит сегодня" />
+        <TodayCard label="Документы" value={String(data.stats.documents_today || 0)} caption="создано сегодня" />
       </div>
 
-      <div className="limit-card">
-        <h3>Лимиты сегодня</h3>
-        <div className="limit-row">
-          <span>Текст</span>
-          <strong>
-            {data.limits.text.used}/{formatLimit(data.limits.text.limit)}
-          </strong>
+      <section className="premium-panel">
+        <div>
+          <span className="panel-kicker">Быстрый старт</span>
+          <h3>Что сделать сейчас?</h3>
+          <p>Выбери сценарий — Mini App отправит тебя в нужную точку бота.</p>
         </div>
-        <div className="limit-row">
-          <span>Голосовые</span>
-          <strong>
-            {data.limits.voice.used}/{formatLimit(data.limits.voice.limit)}
-          </strong>
-        </div>
-      </div>
 
-      <div className="action-list">
-        <ActionCard
-          title="Быстро решить задачу"
-          text="Открой чат и отправь любую рабочую вводную. Бот сам определит сценарий."
-          button="Открыть ассистента"
-          onClick={() => sendToBot("assistant")}
-        />
-        <ActionCard
-          title="Создать документ"
-          text="Преврати сырые вводные в КП, план работ, резюме встречи или чек-лист."
-          button="Открыть документы"
-          onClick={() => sendToBot("documents")}
-        />
-      </div>
+        <div className="quick-grid">
+          <QuickAction title="Спросить ассистента" text="Любая задача, идея или вопрос." onClick={() => sendToBot("assistant")} />
+          <QuickAction title="Создать КП" text="Коммерческое предложение в DOCX/PDF." onClick={() => sendToBot("documents")} />
+          <QuickAction title="Открыть проекты" text="Память по клиентам, срокам и договорённостям." onClick={() => sendToBot("projects")} />
+          <QuickAction title="Усилить тариф" text="Больше лимитов и рабочих возможностей." onClick={() => sendToBot("subscription")} />
+        </div>
+      </section>
+
+      <section className="summary-strip">
+        <div>
+          <strong>{data.stats.projects_total}</strong>
+          <span>проектов</span>
+        </div>
+        <div>
+          <strong>{data.stats.documents_generated}</strong>
+          <span>документов</span>
+        </div>
+        <div>
+          <strong>{data.stats.messages_total}</strong>
+          <span>сообщений</span>
+        </div>
+      </section>
     </>
+  );
+}
+
+function StatusPanel({ status }: { status: ApiStatus }) {
+  return (
+    <article className={`status-panel status-${status}`}>
+      <div>
+        <span>{statusLabel(status)}</span>
+        <p>{statusDescription(status)}</p>
+      </div>
+    </article>
   );
 }
 
@@ -325,9 +378,10 @@ function ProjectsScreen({ data }: { data: MiniAppData }) {
 
       {projects.length === 0 ? (
         <EmptyState
+          icon="◩"
           title="Проектов пока нет"
-          text="Создай первый проект в боте. После этого он появится здесь карточкой."
-          button="Создать проект"
+          text="Создай первый проект, чтобы бот начал помнить клиентов, сроки, бюджеты и договорённости."
+          button="Создать первый проект"
           onClick={() => sendToBot("new_project")}
         />
       ) : (
@@ -367,9 +421,10 @@ function DocumentsScreen({ data, initData }: { data: MiniAppData; initData: stri
 
       {documents.length === 0 ? (
         <EmptyState
+          icon="□"
           title="Документов пока нет"
-          text="Собери первый документ в боте. История появится здесь автоматически."
-          button="Создать документ"
+          text="Собери первый файл: КП, план работ, резюме встречи или чек-лист. История появится здесь автоматически."
+          button="Создать первый документ"
           onClick={() => sendToBot("documents")}
         />
       ) : (
@@ -391,10 +446,13 @@ function SubscriptionScreen({ data }: { data: MiniAppData }) {
         <h2>Подписка</h2>
       </div>
 
-      <p className="lead">
-        Текущий тариф: <strong>{data.subscription.plan_name}</strong>. Действует до:{" "}
-        <strong>{data.subscription.expires_text}</strong>.
-      </p>
+      <section className="subscription-hero">
+        <span className="panel-kicker">Текущий тариф</span>
+        <h3>{data.subscription.plan_name}</h3>
+        <p>
+          Действует до: <strong>{data.subscription.expires_text}</strong>
+        </p>
+      </section>
 
       <div className="plans">
         <Plan title="Pro" price="299 ⭐" items={["больше запросов", "больше голосовых", "DOCX/PDF", "проекты"]} />
@@ -432,6 +490,25 @@ function DemoScreen() {
         Запустить демо
       </button>
     </>
+  );
+}
+
+function TodayCard({ label, value, caption }: { label: string; value: string; caption: string }) {
+  return (
+    <article className="today-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{caption}</small>
+    </article>
+  );
+}
+
+function QuickAction({ title, text, onClick }: { title: string; text: string; onClick: () => void }) {
+  return (
+    <button className="quick-action" type="button" onClick={onClick}>
+      <strong>{title}</strong>
+      <span>{text}</span>
+    </button>
   );
 }
 
@@ -528,11 +605,13 @@ function DocumentCard({ document, initData }: { document: MiniAppDocument; initD
 }
 
 function EmptyState({
+  icon,
   title,
   text,
   button,
   onClick
 }: {
+  icon: string;
   title: string;
   text: string;
   button: string;
@@ -540,42 +619,10 @@ function EmptyState({
 }) {
   return (
     <article className="empty-state">
-      <div className="empty-icon">◌</div>
+      <div className="empty-icon">{icon}</div>
       <h3>{title}</h3>
       <p>{text}</p>
       <button type="button" onClick={onClick}>
-        {button}
-      </button>
-    </article>
-  );
-}
-
-function Metric({ title, value, caption }: { title: string; value: string; caption: string }) {
-  return (
-    <article className="metric">
-      <div className="metric-title">{title}</div>
-      <div className="metric-value">{value}</div>
-      <div className="metric-caption">{caption}</div>
-    </article>
-  );
-}
-
-function ActionCard({
-  title,
-  text,
-  button,
-  onClick
-}: {
-  title: string;
-  text: string;
-  button: string;
-  onClick: () => void;
-}) {
-  return (
-    <article className="action-card">
-      <h3>{title}</h3>
-      <p>{text}</p>
-      <button onClick={onClick} type="button">
         {button}
       </button>
     </article>
