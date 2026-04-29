@@ -11,6 +11,11 @@ from aiogram.types import Message
 
 from app.bot.keyboards import feedback_keyboard, main_keyboard, modes_keyboard
 from app.config import get_settings
+from app.services.dialogue import (
+    build_dialogue_prompt,
+    build_search_text_for_dialogue,
+    detect_dialogue_action,
+)
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
@@ -21,6 +26,7 @@ from app.services.projects import (
 )
 from app.services.queue import enqueue_media_task
 from app.services.users import ensure_user
+from app.services.web_search import WebSearchBundle, WebSearchService
 from app.storage.db import connect_db
 from app.storage.repositories import (
     MessageRepository,
@@ -54,10 +60,10 @@ MODE_BY_BUTTON = {
             "как упаковать ценность, кому продавать и что показывать первым пользователям."
         ),
         "examples": [
+            "Найди свежую информацию по Telegram Stars и объясни, как это влияет на мой бот.",
+            "Проверь актуальные изменения Telegram Bot API и дай короткую выжимку.",
             "Разбери мою идею и скажи, есть ли в ней ценность для пользователя.",
             "Составь план на неделю, чтобы продвинуть мой проект без бюджета.",
-            "Объясни простыми словами, чем мой продукт отличается от обычного ChatGPT.",
-            "Помоги принять решение: делать Mini App сейчас или сначала докрутить бота.",
             "Собери из моих мыслей понятную структуру и следующий шаг.",
         ],
     },
@@ -129,10 +135,10 @@ MODE_BY_BUTTON = {
             "первый платный сценарий и что показать первым пользователям."
         ),
         "examples": [
+            "Найди свежие данные по рынку Telegram Mini Apps и дай выводы для продукта.",
             "Разбери идею моего Telegram AI-бота: ЦА, боль, ценность, MVP.",
             "Сформулируй позиционирование продукта для первых пользователей.",
             "Какие 3 гипотезы мне проверить перед запуском подписки?",
-            "Собери roadmap продукта на месяц: что даст максимум ценности.",
             "Придумай первый платный сценарий, за который пользователь реально заплатит.",
         ],
     },
@@ -148,10 +154,10 @@ MODE_BY_BUTTON = {
             "но хочется выглядеть как премиальный продукт?"
         ),
         "examples": [
+            "Найди свежую информацию по конкурентам Telegram AI-ботов и дай стратегию.",
             "Как вывести AI-бота на первых платных пользователей без бюджета?",
             "Найди сильный ход, чтобы мой продукт выглядел премиально на старте.",
             "Какие каналы продвижения выбрать, если ресурсов мало?",
-            "Разбери риски запуска и скажи, что может сломать продукт.",
             "Составь стратегию на 30 дней: рост, упаковка, первые продажи.",
         ],
     },
@@ -182,6 +188,11 @@ SERVICE_BUTTONS = {
     "📋 План работ",
     "📝 Резюме встречи",
     "✅ Чек-лист",
+    "📄 Документ из проекта",
+    "🧾 КП из проекта",
+    "📋 План из проекта",
+    "📝 Резюме из проекта",
+    "✅ Чек-лист из проекта",
     "🧾 Демо: хаос",
     "🗂 Демо: проект",
     "📄 Демо: документ",
@@ -201,6 +212,39 @@ def _examples_block(examples: list[str]) -> str:
     )
 
 
+def _web_status_text(bundle: WebSearchBundle) -> str:
+    if not bundle.requested:
+        return ""
+
+    if not bundle.enabled:
+        return (
+            "\n\n🌐 <b>Web-поиск запрошен, но отключён</b>\n"
+            "Чтобы искать актуальные данные, включи <code>WEB_SEARCH_ENABLED=true</code> и добавь API-ключ поиска."
+        )
+
+    if bundle.has_results:
+        return (
+            "\n\n🌐 <b>Нашёл данные в сети</b>\n"
+            f"Источник: <code>{bundle.provider}</code>. "
+            f"Результатов: <code>{len(bundle.results)}</code>."
+        )
+
+    return (
+        "\n\n🌐 <b>Поиск выполнен, но результатов нет</b>\n"
+        "Отвечу осторожно и не буду выдумывать свежие факты."
+    )
+
+
+def _dialogue_status_text(is_followup: bool, title: str) -> str:
+    if not is_followup:
+        return ""
+
+    return (
+        "\n\n💬 <b>Понял продолжение диалога</b>\n"
+        f"Действие: <code>{title}</code>."
+    )
+
+
 @router.message(F.text.in_({"🧠 Режимы", "🧠 Ассистент"}))
 async def assistant_menu_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -208,7 +252,7 @@ async def assistant_menu_handler(message: Message, state: FSMContext) -> None:
         "🧠 <b>Режимы</b>\n\n"
         "Это витрина рабочих сценариев. Если не знаешь, куда нажимать — выбирай <b>🌍 Универсальный</b>.\n\n"
         "🌍 <b>Универсальный</b>\n"
-        "Для любых задач: стратегия, тексты, идеи, анализ, объяснения, планы, решения.\n\n"
+        "Для любых задач: стратегия, тексты, идеи, анализ, объяснения, планы, решения и поиск актуальных данных.\n\n"
         "✍️ <b>Ответ клиенту</b>\n"
         "Готовый деловой ответ без оправданий, воды и нервов.\n\n"
         "🧾 <b>Разобрать хаос</b>\n"
@@ -219,9 +263,11 @@ async def assistant_menu_handler(message: Message, state: FSMContext) -> None:
         "Идея → ЦА, боль, ценность, MVP, гипотезы, метрики.\n\n"
         "🔥 <b>Стратег</b>\n"
         "Позиционирование, рост, сильные ходы, риски и план удара.\n\n"
-        "🗂 <b>Проекты</b> — рабочая память.\n"
-        "📄 <b>Документы</b> — DOCX/PDF.\n"
-        "🚀 <b>Демо</b> — быстрый показ возможностей.\n\n"
+        "🌐 <b>Web-поиск</b>\n"
+        "Напиши: <code>найди</code>, <code>проверь</code>, <code>актуальные данные</code>, <code>что нового</code>.\n\n"
+        "💬 <b>Диалог</b>\n"
+        "После ответа можно писать: <code>сделай короче</code>, <code>продолжи</code>, "
+        "<code>подробнее</code>, <code>перепиши</code>, <code>проверь это в сети</code>.\n\n"
         "Выбери режим ниже. После выбора я покажу примеры запросов.",
         reply_markup=modes_keyboard(),
         parse_mode="HTML",
@@ -412,24 +458,54 @@ async def _process_text_request(
             )
             return
 
+        history = await msg_repo.recent(user_id=user_db_id, limit=16)
+        dialogue_action = detect_dialogue_action(text)
+
+        search_text = build_search_text_for_dialogue(
+            user_text=text,
+            history=history,
+            action=dialogue_action,
+        )
+
         project_context = ""
-        if use_project_context and should_use_project_context(text):
-            found_projects = await project_repo.search_active(user_id=user_db_id, query=text, limit=5)
+        should_search_projects = should_use_project_context(text) or dialogue_action.is_followup
+
+        if use_project_context and should_search_projects:
+            project_query = search_text if dialogue_action.needs_web else text
+            found_projects = await project_repo.search_active(user_id=user_db_id, query=project_query, limit=5)
 
             if not found_projects:
                 found_projects = await project_repo.latest_context(user_id=user_db_id, limit=3)
 
             project_context = build_projects_context(found_projects)
 
-        enriched_text = build_prompt_with_project_context(text, project_context)
-
         await usage_repo.add(user_id=user_db_id, kind="text")
         await msg_repo.add(user_id=user_db_id, role="user", content=text)
 
-        history = await msg_repo.recent(user_id=user_db_id, limit=12)
+    web_service = WebSearchService(settings)
+    web_bundle = await web_service.search_if_needed(search_text)
+    web_context = web_service.build_context(web_bundle)
+
+    dialogue_prompt = build_dialogue_prompt(
+        user_text=text,
+        history=history,
+        action=dialogue_action,
+    )
+
+    enriched_text = build_prompt_with_project_context(dialogue_prompt, project_context)
+
+    if web_context:
+        enriched_text = (
+            f"{enriched_text}\n\n"
+            "=== WEB SEARCH CONTEXT ===\n"
+            f"{web_context}\n"
+            "=== END WEB SEARCH CONTEXT ==="
+        )
 
     await message.answer(
-        telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context))),
+        telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context)))
+        + _dialogue_status_text(dialogue_action.is_followup, dialogue_action.title)
+        + _web_status_text(web_bundle),
         parse_mode="HTML",
     )
 
@@ -450,4 +526,13 @@ async def _process_text_request(
             telegram_html_from_ai_text(chunk),
             reply_markup=feedback_keyboard() if is_last else None,
             parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
+    sources_html = web_service.format_sources_html(web_bundle)
+    if sources_html:
+        await message.answer(
+            sources_html,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
         )
