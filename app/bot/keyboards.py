@@ -138,12 +138,35 @@ def projects_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="📝 Заметка в проект"),
             ],
             [
+                KeyboardButton(text="📄 Документ из проекта"),
                 KeyboardButton(text="🧠 Контекст проектов"),
+            ],
+            [
                 KeyboardButton(text="⬅️ Назад"),
             ],
         ],
         resize_keyboard=True,
-        input_field_placeholder="Добавь проект, найди проект или обнови память",
+        input_field_placeholder="Добавь проект, найди проект или собери документ",
+    )
+
+
+def project_document_type_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="🧾 КП из проекта"),
+                KeyboardButton(text="📋 План из проекта"),
+            ],
+            [
+                KeyboardButton(text="📝 Резюме из проекта"),
+                KeyboardButton(text="✅ Чек-лист из проекта"),
+            ],
+            [
+                KeyboardButton(text="⬅️ Назад"),
+            ],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выбери документ на основе проекта",
     )
 
 

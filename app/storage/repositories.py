@@ -173,6 +173,20 @@ class ProjectRepository:
         )
         return await cursor.fetchall()
 
+    async def get_owned(self, project_id: int, user_id: int) -> aiosqlite.Row | None:
+        cursor = await self.db.execute(
+            """
+            SELECT *
+            FROM projects
+            WHERE id = ?
+              AND user_id = ?
+              AND status = 'active'
+            LIMIT 1
+            """,
+            (project_id, user_id),
+        )
+        return await cursor.fetchone()
+
     async def search_active(self, user_id: int, query: str, limit: int = 5) -> list[aiosqlite.Row]:
         normalized = f"%{query.strip()}%"
 
