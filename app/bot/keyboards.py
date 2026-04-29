@@ -28,6 +28,10 @@ def modes_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="📌 Сделать план"),
             ],
             [
+                KeyboardButton(text="🧩 Продукт"),
+                KeyboardButton(text="🔥 Стратег"),
+            ],
+            [
                 KeyboardButton(text="🗂 Проекты"),
                 KeyboardButton(text="📄 Документы"),
             ],
