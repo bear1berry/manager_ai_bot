@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from aiogram import Router
 
-from app.routers import admin, assistant, demo, documents, feedback, miniapp, profile, projects, start, subscription
+from app.routers import (
+    admin,
+    assistant,
+    demo,
+    documents,
+    feedback,
+    group_assistant,
+    miniapp,
+    profile,
+    projects,
+    start,
+    subscription,
+)
 
 
 def setup_routers() -> Router:
@@ -17,6 +29,10 @@ def setup_routers() -> Router:
     router.include_router(demo.router)
     router.include_router(miniapp.router)
     router.include_router(feedback.router)
+
+    # Важно: групповой роутер должен быть до assistant.router,
+    # чтобы бот не отвечал на каждое сообщение в группе.
+    router.include_router(group_assistant.router)
     router.include_router(assistant.router)
 
     return router

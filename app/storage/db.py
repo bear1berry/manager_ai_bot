@@ -141,6 +141,40 @@ ON payments(user_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_payments_status_created_at
 ON payments(status, created_at);
+
+CREATE TABLE IF NOT EXISTS group_chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL UNIQUE,
+    title TEXT,
+    username TEXT,
+    memory_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_chats_memory_enabled
+ON group_chats(memory_enabled, updated_at);
+
+CREATE TABLE IF NOT EXISTS group_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    user_telegram_id INTEGER,
+    username TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    content TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'text',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (chat_id) REFERENCES group_chats(chat_id) ON DELETE CASCADE,
+    UNIQUE(chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_messages_chat_created
+ON group_messages(chat_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_group_messages_chat_message
+ON group_messages(chat_id, message_id);
 """
 
 
@@ -191,6 +225,13 @@ async def _run_migrations(db: aiosqlite.Connection) -> None:
 
         if not await _column_exists(db, "users", "plan_updated_at"):
             await db.execute("ALTER TABLE users ADD COLUMN plan_updated_at TEXT")
+
+    if await _table_exists(db, "documents"):
+        if not await _column_exists(db, "documents", "docx_size_bytes"):
+            await db.execute("ALTER TABLE documents ADD COLUMN docx_size_bytes INTEGER NOT NULL DEFAULT 0")
+
+        if not await _column_exists(db, "documents", "pdf_size_bytes"):
+            await db.execute("ALTER TABLE documents ADD COLUMN pdf_size_bytes INTEGER NOT NULL DEFAULT 0")
 
     await db.commit()
 

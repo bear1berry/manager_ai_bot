@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="deepseek-chat", alias="LLM_MODEL")
     llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
 
+    web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
+    web_search_provider: Literal["tavily", "serper", "brave"] = Field(default="tavily", alias="WEB_SEARCH_PROVIDER")
+    web_search_max_results: int = Field(default=5, alias="WEB_SEARCH_MAX_RESULTS")
+    web_search_timeout_seconds: int = Field(default=20, alias="WEB_SEARCH_TIMEOUT_SECONDS")
+
+    tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
+    tavily_base_url: str = Field(default="https://api.tavily.com", alias="TAVILY_BASE_URL")
+
+    serper_api_key: str = Field(default="", alias="SERPER_API_KEY")
+    serper_base_url: str = Field(default="https://google.serper.dev", alias="SERPER_BASE_URL")
+
+    brave_api_key: str = Field(default="", alias="BRAVE_API_KEY")
+    brave_base_url: str = Field(default="https://api.search.brave.com", alias="BRAVE_BASE_URL")
+
     yandex_speechkit_api_key: str = Field(default="", alias="YANDEX_SPEECHKIT_API_KEY")
     yandex_speechkit_folder_id: str = Field(default="", alias="YANDEX_SPEECHKIT_FOLDER_ID")
     yandex_stt_language: str = Field(default="ru-RU", alias="YANDEX_STT_LANGUAGE")

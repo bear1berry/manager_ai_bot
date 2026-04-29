@@ -31,6 +31,21 @@ export type MiniAppDocument = {
   updated_at: string;
 };
 
+
+export type MiniAppGroup = {
+  chat_id: number;
+  title: string;
+  username?: string | null;
+  memory_enabled: boolean;
+  memory_status_label: string;
+  messages_total: number;
+  messages_today: number;
+  messages_last_hour: number;
+  created_at: string;
+  updated_at: string;
+  updated_text?: string;
+};
+
 export type MiniAppData = {
   ok: boolean;
   demo?: boolean;
@@ -66,11 +81,16 @@ export type MiniAppData = {
     feedback_total: number;
     payments_paid: number;
     stars_paid: number;
+    groups_total?: number;
+    groups_memory_enabled?: number;
+    group_messages_today?: number;
   };
   projects: MiniAppProject[];
   latest_projects?: MiniAppProject[];
   documents?: MiniAppDocument[];
   latest_documents?: MiniAppDocument[];
+  groups?: MiniAppGroup[];
+  latest_groups?: MiniAppGroup[];
 };
 
 function apiBaseUrl(): string | null {

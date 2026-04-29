@@ -190,6 +190,15 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
 
         latest_projects = await _latest_projects(db, user_id=user_id, limit=8)
         latest_documents = await _latest_documents(db, user_id=user_id, limit=8)
+        latest_groups = await _latest_groups(
+            db,
+            telegram_id=tg_user.telegram_id,
+            is_admin=settings.is_admin(tg_user.telegram_id, tg_user.username),
+            limit=12,
+        )
+        groups_total = len(latest_groups)
+        groups_memory_enabled = sum(1 for item in latest_groups if item.get("memory_enabled"))
+        group_messages_today = sum(int(item.get("messages_today", 0) or 0) for item in latest_groups)
 
     payload = {
         "ok": True,
@@ -225,11 +234,16 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
             "feedback_total": feedback_total,
             "payments_paid": payments_paid,
             "stars_paid": stars_paid,
+            "groups_total": groups_total,
+            "groups_memory_enabled": groups_memory_enabled,
+            "group_messages_today": group_messages_today,
         },
         "projects": latest_projects,
         "latest_projects": latest_projects,
         "documents": latest_documents,
         "latest_documents": latest_documents,
+        "groups": latest_groups,
+        "latest_groups": latest_groups,
     }
 
     return _json_response(payload, settings=settings)
@@ -556,6 +570,96 @@ async def _latest_documents(db, user_id: int, limit: int) -> list[dict[str, Any]
     return result
 
 
+
+async def _latest_groups(db, telegram_id: int, is_admin: bool, limit: int) -> list[dict[str, Any]]:
+    if is_admin:
+        cursor = await db.execute(
+            """
+            SELECT
+                group_chats.chat_id,
+                group_chats.title,
+                group_chats.username,
+                group_chats.memory_enabled,
+                group_chats.created_at,
+                group_chats.updated_at,
+                COUNT(group_messages.id) AS messages_total,
+                COALESCE(SUM(CASE
+                    WHEN DATE(group_messages.created_at, 'localtime') = DATE('now', 'localtime')
+                    THEN 1 ELSE 0
+                END), 0) AS messages_today,
+                COALESCE(SUM(CASE
+                    WHEN DATETIME(group_messages.created_at, 'localtime') >= DATETIME('now', 'localtime', '-1 hours')
+                    THEN 1 ELSE 0
+                END), 0) AS messages_last_hour
+            FROM group_chats
+            LEFT JOIN group_messages ON group_messages.chat_id = group_chats.chat_id
+            GROUP BY group_chats.chat_id
+            ORDER BY group_chats.updated_at DESC, group_chats.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+    else:
+        cursor = await db.execute(
+            """
+            SELECT
+                group_chats.chat_id,
+                group_chats.title,
+                group_chats.username,
+                group_chats.memory_enabled,
+                group_chats.created_at,
+                group_chats.updated_at,
+                COUNT(group_messages.id) AS messages_total,
+                COALESCE(SUM(CASE
+                    WHEN DATE(group_messages.created_at, 'localtime') = DATE('now', 'localtime')
+                    THEN 1 ELSE 0
+                END), 0) AS messages_today,
+                COALESCE(SUM(CASE
+                    WHEN DATETIME(group_messages.created_at, 'localtime') >= DATETIME('now', 'localtime', '-1 hours')
+                    THEN 1 ELSE 0
+                END), 0) AS messages_last_hour
+            FROM group_chats
+            LEFT JOIN group_messages ON group_messages.chat_id = group_chats.chat_id
+            WHERE EXISTS (
+                SELECT 1
+                FROM group_messages AS own_messages
+                WHERE own_messages.chat_id = group_chats.chat_id
+                  AND own_messages.user_telegram_id = ?
+            )
+            GROUP BY group_chats.chat_id
+            ORDER BY group_chats.updated_at DESC, group_chats.id DESC
+            LIMIT ?
+            """,
+            (telegram_id, limit),
+        )
+
+    rows = await cursor.fetchall()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        memory_enabled = int(row["memory_enabled"] or 0) == 1
+        messages_total = int(row["messages_total"] or 0)
+        messages_today = int(row["messages_today"] or 0)
+        messages_last_hour = int(row["messages_last_hour"] or 0)
+
+        result.append(
+            {
+                "chat_id": int(row["chat_id"]),
+                "title": str(row["title"] or "Группа без названия"),
+                "username": row["username"],
+                "memory_enabled": memory_enabled,
+                "memory_status_label": "Память включена" if memory_enabled else "Память выключена",
+                "messages_total": messages_total,
+                "messages_today": messages_today,
+                "messages_last_hour": messages_last_hour,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "updated_text": _format_date(row["updated_at"]),
+            }
+        )
+
+    return result
+
 def _demo_payload() -> dict[str, Any]:
     projects = [
         {
@@ -625,6 +729,36 @@ def _demo_payload() -> dict[str, Any]:
         },
     ]
 
+
+    groups = [
+        {
+            "chat_id": -1001111111111,
+            "title": "Команда запуска",
+            "username": None,
+            "memory_enabled": True,
+            "memory_status_label": "Память включена",
+            "messages_total": 48,
+            "messages_today": 12,
+            "messages_last_hour": 4,
+            "created_at": "demo",
+            "updated_at": "demo",
+            "updated_text": "сегодня",
+        },
+        {
+            "chat_id": -1002222222222,
+            "title": "Клиентский проект",
+            "username": None,
+            "memory_enabled": False,
+            "memory_status_label": "Память выключена",
+            "messages_total": 9,
+            "messages_today": 0,
+            "messages_last_hour": 0,
+            "created_at": "demo",
+            "updated_at": "demo",
+            "updated_text": "вчера",
+        },
+    ]
+
     return {
         "ok": True,
         "demo": True,
@@ -660,11 +794,16 @@ def _demo_payload() -> dict[str, Any]:
             "feedback_total": 3,
             "payments_paid": 0,
             "stars_paid": 0,
+            "groups_total": 2,
+            "groups_memory_enabled": 1,
+            "group_messages_today": 12,
         },
         "projects": projects,
         "latest_projects": projects,
         "documents": documents,
         "latest_documents": documents,
+        "groups": groups,
+        "latest_groups": groups,
     }
 
 

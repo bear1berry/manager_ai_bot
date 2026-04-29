@@ -375,37 +375,10 @@ async def project_document_target_handler(message: Message, state: FSMContext) -
     else:
         project = rows[0]
 
-    await state.update_data(
-        project_id=int(project["id"]),
-        project_title=str(project["title"]),
-    )
-    await state.set_state(ProjectStates.waiting_project_document_type)
-
-    description = str(project["description"] or "").strip()
-    preview = description[:650].rstrip() + "…" if len(description) > 650 else description
-
-    if preview:
-        context_block = f"<b>Контекст проекта</b>\n{preview}"
-    else:
-        context_block = "<i>Описание проекта пока пустое.</i>"
-
-    weak_context_note = ""
-    if len(description) < 120:
-        weak_context_note = (
-            "\n⚠️ <b>В проекте пока мало данных</b>\n"
-            "Документ получится черновым. Лучше добавить заметку через <b>📝 Заметка в проект</b>, "
-            "если нужны точные сроки, условия или договорённости.\n"
-        )
-
-    await message.answer(
-        "✅ <b>Проект выбран</b>\n\n"
-        f"ID: <code>{project['id']}</code>\n"
-        f"Название: <b>{project['title']}</b>\n\n"
-        f"{context_block}\n"
-        f"{weak_context_note}\n"
-        "Теперь выбери тип документа.",
-        reply_markup=project_document_type_keyboard(),
-        parse_mode="HTML",
+    await _show_project_document_type_picker(
+        message=message,
+        state=state,
+        project=project,
     )
 
 
@@ -605,6 +578,74 @@ async def projects_context_handler(message: Message) -> None:
         f"{context}",
         reply_markup=projects_keyboard(),
         parse_mode="Markdown",
+    )
+
+
+async def open_project_document_deeplink(
+    message: Message,
+    state: FSMContext,
+    project_id: int,
+) -> None:
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        user_id = await ensure_user(UserRepository(db), message.from_user)
+        project = await ProjectRepository(db).get_owned(project_id=project_id, user_id=user_id)
+
+    if project is None:
+        await state.clear()
+        await message.answer(
+            "⚠️ <b>Проект не найден</b>\n\n"
+            "Возможно, проект удалён или принадлежит другому пользователю.\n\n"
+            "Открой список через <b>🗂 Проекты</b> → <b>📚 Мои проекты</b>.",
+            reply_markup=projects_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    await _show_project_document_type_picker(
+        message=message,
+        state=state,
+        project=project,
+    )
+
+
+async def _show_project_document_type_picker(
+    message: Message,
+    state: FSMContext,
+    project,
+) -> None:
+    await state.update_data(
+        project_id=int(project["id"]),
+        project_title=str(project["title"]),
+    )
+    await state.set_state(ProjectStates.waiting_project_document_type)
+
+    description = str(project["description"] or "").strip()
+    preview = description[:650].rstrip() + "…" if len(description) > 650 else description
+
+    if preview:
+        context_block = f"<b>Контекст проекта</b>\n{preview}"
+    else:
+        context_block = "<i>Описание проекта пока пустое.</i>"
+
+    weak_context_note = ""
+    if len(description) < 120:
+        weak_context_note = (
+            "\n⚠️ <b>В проекте пока мало данных</b>\n"
+            "Документ получится черновым. Лучше добавить заметку через <b>📝 Заметка в проект</b>, "
+            "если нужны точные сроки, условия или договорённости.\n"
+        )
+
+    await message.answer(
+        "✅ <b>Проект выбран</b>\n\n"
+        f"ID: <code>{project['id']}</code>\n"
+        f"Название: <b>{project['title']}</b>\n\n"
+        f"{context_block}\n"
+        f"{weak_context_note}\n"
+        "Теперь выбери тип документа.",
+        reply_markup=project_document_type_keyboard(),
+        parse_mode="HTML",
     )
 
 

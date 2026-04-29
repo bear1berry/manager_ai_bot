@@ -4,6 +4,7 @@ import {
   loadMiniAppData,
   type MiniAppData,
   type MiniAppDocument,
+  type MiniAppGroup,
   type MiniAppProject
 } from "./api";
 
@@ -30,13 +31,14 @@ declare global {
   }
 }
 
-type TabKey = "home" | "projects" | "docs" | "subscription" | "demo";
+type TabKey = "home" | "projects" | "docs" | "groups" | "subscription" | "demo";
 type ApiStatus = "loading" | "live" | "demo" | "error";
 
 const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
   { key: "home", label: "Главная", icon: "⌁" },
   { key: "projects", label: "Проекты", icon: "◩" },
   { key: "docs", label: "Документы", icon: "□" },
+  { key: "groups", label: "Группы", icon: "◉" },
   { key: "subscription", label: "Подписка", icon: "◇" },
   { key: "demo", label: "Демо", icon: "◎" }
 ];
@@ -66,7 +68,10 @@ const fallbackData: MiniAppData = {
     documents_today: 1,
     feedback_total: 3,
     payments_paid: 0,
-    stars_paid: 0
+    stars_paid: 0,
+    groups_total: 2,
+    groups_memory_enabled: 1,
+    group_messages_today: 12
   },
   projects: [
     {
@@ -132,6 +137,34 @@ const fallbackData: MiniAppData = {
       created_at: "demo",
       created_text: "вчера",
       updated_at: "demo"
+    }
+  ],
+  groups: [
+    {
+      chat_id: -1001111111111,
+      title: "Команда запуска",
+      username: null,
+      memory_enabled: true,
+      memory_status_label: "Память включена",
+      messages_total: 48,
+      messages_today: 12,
+      messages_last_hour: 4,
+      created_at: "demo",
+      updated_at: "demo",
+      updated_text: "сегодня"
+    },
+    {
+      chat_id: -1002222222222,
+      title: "Клиентский проект",
+      username: null,
+      memory_enabled: false,
+      memory_status_label: "Память выключена",
+      messages_total: 9,
+      messages_today: 0,
+      messages_last_hour: 0,
+      created_at: "demo",
+      updated_at: "demo",
+      updated_text: "вчера"
     }
   ]
 };
@@ -284,6 +317,7 @@ function App() {
         {!loading && activeTab === "home" && <HomeScreen data={data} apiStatus={apiStatus} />}
         {!loading && activeTab === "projects" && <ProjectsScreen data={data} />}
         {!loading && activeTab === "docs" && <DocumentsScreen data={data} initData={webApp?.initData || ""} />}
+        {!loading && activeTab === "groups" && <GroupsScreen data={data} />}
         {!loading && activeTab === "subscription" && <SubscriptionScreen data={data} />}
         {!loading && activeTab === "demo" && <DemoScreen />}
       </section>
@@ -309,6 +343,7 @@ function HomeScreen({ data, apiStatus }: { data: MiniAppData; apiStatus: ApiStat
         <TodayCard label="Текст" value={`${data.limits.text.used}/${textLimit}`} caption="лимит сегодня" />
         <TodayCard label="Голос" value={`${data.limits.voice.used}/${voiceLimit}`} caption="лимит сегодня" />
         <TodayCard label="Документы" value={String(data.stats.documents_today || 0)} caption="создано сегодня" />
+        <TodayCard label="Группы" value={String(data.stats.groups_total || 0)} caption="AI-секретарь" />
       </div>
 
       <section className="premium-panel">
@@ -438,6 +473,103 @@ function DocumentsScreen({ data, initData }: { data: MiniAppData; initData: stri
   );
 }
 
+
+function GroupsScreen({ data }: { data: MiniAppData }) {
+  const groups = data.latest_groups || data.groups || [];
+  const enabledCount = groups.filter((group) => group.memory_enabled).length;
+  const todayMessages = groups.reduce((sum, group) => sum + (group.messages_today || 0), 0);
+
+  return (
+    <>
+      <div className="section-heading">
+        <span>◉</span>
+        <h2>Группы</h2>
+      </div>
+
+      <p className="lead">
+        AI-секретарь для Telegram-групп: память, сводки, web-поиск и документы по переписке.
+      </p>
+
+      <div className="group-summary">
+        <TodayCard label="Групп" value={String(groups.length)} caption="в кабинете" />
+        <TodayCard label="Память" value={`${enabledCount}/${groups.length || 0}`} caption="включена" />
+        <TodayCard label="Сегодня" value={String(todayMessages)} caption="сообщений" />
+      </div>
+
+      <div className="group-actions">
+        <button type="button" onClick={() => sendToBot("grouphelp")}>
+          Инструкция
+        </button>
+        <button type="button" onClick={() => sendToBot("assistant")}>
+          Открыть чат
+        </button>
+      </div>
+
+      {groups.length === 0 ? (
+        <EmptyState
+          icon="◉"
+          title="Групп пока нет"
+          text="Добавь бота в Telegram-группу, включи /group_on и напиши несколько сообщений. После этого группа появится здесь."
+          button="Как включить"
+          onClick={() => sendToBot("grouphelp")}
+        />
+      ) : (
+        <div className="group-grid">
+          {groups.map((group) => (
+            <GroupCard key={group.chat_id} group={group} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function GroupCard({ group }: { group: MiniAppGroup }) {
+  const updatedText = group.updated_text || group.updated_at || "—";
+  const memoryClass = group.memory_enabled ? "group-memory enabled" : "group-memory disabled";
+
+  return (
+    <article className="group-card">
+      <div className="group-card-header">
+        <div>
+          <div className={memoryClass}>{group.memory_status_label}</div>
+          <h3>{group.title}</h3>
+        </div>
+        <span>{updatedText}</span>
+      </div>
+
+      <div className="group-metrics">
+        <div>
+          <strong>{group.messages_last_hour}</strong>
+          <span>за 60 минут</span>
+        </div>
+        <div>
+          <strong>{group.messages_today}</strong>
+          <span>сегодня</span>
+        </div>
+        <div>
+          <strong>{group.messages_total}</strong>
+          <span>всего</span>
+        </div>
+      </div>
+
+      <div className="group-hint">
+        <span>Команды</span>
+        <strong>/group_status · /group_on · /group_clear</strong>
+      </div>
+
+      <div className="group-card-actions">
+        <button type="button" onClick={() => sendToBot("grouphelp")}>
+          Настроить
+        </button>
+        <button type="button" onClick={() => sendToBot("documents")}>
+          Документы
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function SubscriptionScreen({ data }: { data: MiniAppData }) {
   return (
     <>
@@ -545,7 +677,7 @@ function ProjectCard({ project }: { project: MiniAppProject }) {
         <button type="button" onClick={() => sendToBot(`project_${project.id}`)}>
           Открыть
         </button>
-        <button type="button" onClick={() => sendToBot("documents")}>
+        <button type="button" onClick={() => sendToBot(`project_doc_${project.id}`)}>
           Документ
         </button>
       </div>
