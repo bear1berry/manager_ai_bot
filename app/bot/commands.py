@@ -3,12 +3,16 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonWebApp, WebAppInfo
+
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
 async def setup_bot_commands(bot: Bot) -> None:
+    settings = get_settings()
+
     commands = [
         BotCommand(command="start", description="Запустить Менеджер ИИ"),
         BotCommand(command="menu", description="Открыть главное меню"),
@@ -25,3 +29,17 @@ async def setup_bot_commands(bot: Bot) -> None:
 
     await bot.set_my_commands(commands)
     logger.info("Bot commands configured: %s", ", ".join(f"/{item.command}" for item in commands))
+
+    mini_app_url = settings.mini_app_url.strip()
+
+    if mini_app_url:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="Mini App",
+                web_app=WebAppInfo(url=mini_app_url),
+            )
+        )
+        logger.info("Telegram menu button configured as Mini App: %s", mini_app_url)
+    else:
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Telegram menu button configured as commands because MINI_APP_URL is empty")
