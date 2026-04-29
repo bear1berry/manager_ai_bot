@@ -1,59 +1,68 @@
 from __future__ import annotations
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
-
-from app.config import get_settings
-
-
-def _mini_app_button() -> KeyboardButton:
-    settings = get_settings()
-
-    if settings.mini_app_url.strip():
-        return KeyboardButton(
-            text="🌐 Mini App",
-            web_app=WebAppInfo(url=settings.mini_app_url.strip()),
-        )
-
-    return KeyboardButton(text="🌐 Mini App")
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="🧠 Ассистент"),
-                KeyboardButton(text="🗂 Проекты"),
-            ],
-            [
-                KeyboardButton(text="📄 Документы"),
+                KeyboardButton(text="🧠 Режимы"),
                 KeyboardButton(text="👤 Профиль"),
-            ],
-            [
-                _mini_app_button(),
-                KeyboardButton(text="🚀 Демо"),
-            ],
-            [
-                KeyboardButton(text="💎 Подписка"),
             ],
         ],
         resize_keyboard=True,
-        input_field_placeholder="Напиши задачу, скинь голосовое или выбери раздел",
+        input_field_placeholder="Напиши задачу или выбери раздел",
     )
 
 
-def assistant_keyboard() -> ReplyKeyboardMarkup:
+def modes_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [
+                KeyboardButton(text="🌍 Универсальный"),
                 KeyboardButton(text="✍️ Ответ клиенту"),
-                KeyboardButton(text="🧾 Разобрать хаос"),
             ],
             [
+                KeyboardButton(text="🧾 Разобрать хаос"),
                 KeyboardButton(text="📌 Сделать план"),
+            ],
+            [
+                KeyboardButton(text="🗂 Проекты"),
+                KeyboardButton(text="📄 Документы"),
+            ],
+            [
+                KeyboardButton(text="🚀 Демо"),
                 KeyboardButton(text="⬅️ Назад"),
             ],
         ],
         resize_keyboard=True,
+        input_field_placeholder="Выбери режим или напиши задачу",
+    )
+
+
+def assistant_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Обратная совместимость: старые импорты не ломаем.
+    Фактически теперь это клавиатура раздела «Режимы».
+    """
+    return modes_keyboard()
+
+
+def profile_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📊 Лимиты"),
+                KeyboardButton(text="📈 Активность"),
+            ],
+            [
+                KeyboardButton(text="💎 Подписка"),
+                KeyboardButton(text="⬅️ Назад"),
+            ],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Профиль, лимиты и подписка",
     )
 
 
@@ -109,6 +118,7 @@ def documents_keyboard() -> ReplyKeyboardMarkup:
             ],
         ],
         resize_keyboard=True,
+        input_field_placeholder="Выбери тип документа",
     )
 
 
@@ -141,8 +151,10 @@ def subscription_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text="🏢 Business"),
             ],
             [
+                KeyboardButton(text="👤 Профиль"),
                 KeyboardButton(text="⬅️ Назад"),
             ],
         ],
         resize_keyboard=True,
+        input_field_placeholder="Выбери тариф",
     )
