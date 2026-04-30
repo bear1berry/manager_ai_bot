@@ -18,6 +18,7 @@ export type MiniAppDocument = {
   title: string;
   status: string;
   status_label?: string;
+  group_chat_id?: number | null;
   has_docx: boolean;
   has_pdf: boolean;
   docx_size_bytes: number;
@@ -41,6 +42,8 @@ export type MiniAppGroup = {
   messages_total: number;
   messages_today: number;
   messages_last_hour: number;
+  documents_total?: number;
+  documents?: MiniAppDocument[];
   created_at: string;
   updated_at: string;
   updated_text?: string;
