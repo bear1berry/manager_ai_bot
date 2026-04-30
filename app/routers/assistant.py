@@ -27,6 +27,7 @@ from app.services.dialogue import (
     detect_document_followup_intent,
 )
 from app.services.documents import DocumentService
+from app.services.feature_gates import check_feature, is_deep_research_request
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
@@ -520,6 +521,26 @@ async def _process_text_request(
             user_text=search_text,
             decision=brain_decision,
         )
+
+        deep_gate = check_feature(plan, "deep_research")
+        if is_deep_research_request(text) and not deep_gate.allowed:
+            await message.answer(
+                deep_gate.message,
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+
+        document_gate = check_feature(plan, "documents")
+        if document_followup_intent.should_generate and not document_gate.allowed:
+            await message.answer(
+                document_gate.message,
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
 
         project_context = ""
         should_search_projects = should_use_project_context(text) or dialogue_action.is_followup

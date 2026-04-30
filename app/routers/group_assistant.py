@@ -13,10 +13,19 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
 
 from app.config import get_settings
+from app.services.brain import (
+    brain_status_text,
+    build_brain_instruction,
+    build_brain_search_text,
+    decide_brain,
+)
 from app.services.documents import DocumentService
+from app.services.feature_gates import check_feature, is_deep_research_request
+from app.services.deep_research import DeepResearchService
 from app.services.intents import IntentResult, detect_intent
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
+from app.services.quality import build_quality_instruction, decide_quality
 from app.services.personality import (
     build_personality_instruction,
     decide_personality,
@@ -373,6 +382,13 @@ def _group_document_status_text(document_intent: GroupDocumentIntent, selection:
         "— собираю структуру;\n"
         "— готовлю DOCX/PDF;\n"
         "— сохраняю документ в историю."
+    )
+
+
+def _deep_research_status_text() -> str:
+    return (
+        "\n\n🔎 <b>Deep Research</b>\n"
+        "Запускаю глубокий поиск: несколько запросов, источники, сравнение и выводы."
     )
 
 
@@ -812,6 +828,20 @@ async def group_on_handler(message: Message) -> None:
     settings = get_settings()
 
     async with await connect_db(settings.database_path) as db:
+        user_repo = UserRepository(db)
+        user_db_id = await ensure_user(user_repo, message.from_user)
+        user = await user_repo.get_by_telegram_id(message.from_user.id)
+        plan = str(user["plan"]) if user else "free"
+
+        gate = check_feature(plan, "group_memory")
+        if not gate.allowed:
+            await message.answer(
+                gate.message,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+
         await _set_group_memory_enabled(db, message, enabled=True)
 
     await message.answer(
@@ -949,6 +979,14 @@ async def group_text_router(message: Message, bot: Bot) -> None:
         selection=selection,
         chat_title=message.chat.title,
     )
+    brain_decision = decide_brain(
+        user_text=query,
+        detected_mode=intent.mode,
+        is_followup=False,
+        is_document=document_intent.should_generate,
+        is_group=True,
+    )
+    brain_instruction = build_brain_instruction(brain_decision)
     personality_decision = decide_personality(
         user_text=query,
         mode=intent.mode,
@@ -977,8 +1015,23 @@ async def group_text_router(message: Message, bot: Bot) -> None:
         return
 
     web_service = WebSearchService(settings)
-    web_bundle = await web_service.search_if_needed(query)
+    brain_search_text = build_brain_search_text(
+        user_text=query,
+        decision=brain_decision,
+        extra_context=memory_context,
+    )
+    web_bundle = await web_service.search_if_needed(brain_search_text)
     web_context = web_service.build_context(web_bundle)
+
+    quality_decision = decide_quality(
+        user_text=query,
+        mode=intent.mode,
+        has_web_context=bool(web_context),
+        is_deep_research=False,
+        is_document=document_intent.should_generate,
+        is_group=True,
+    )
+    quality_instruction = build_quality_instruction(quality_decision)
 
     async with await connect_db(settings.database_path) as db:
         user_repo = UserRepository(db)
@@ -1003,7 +1056,66 @@ async def group_text_router(message: Message, bot: Bot) -> None:
             )
             return
 
+        deep_gate = check_feature(plan, "deep_research")
+        if is_deep_research_request(query) and not deep_gate.allowed:
+            await message.answer(
+                deep_gate.message,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+
+        group_document_gate = check_feature(plan, "group_documents")
+        if document_intent.should_generate and not group_document_gate.allowed:
+            await message.answer(
+                group_document_gate.message,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+
         await usage_repo.add(user_id=user_db_id, kind="text")
+
+    deep_research = DeepResearchService(settings)
+    if deep_research.should_run(query):
+        await message.answer(
+            _group_status_text(intent, selection, selected_count)
+            + _web_status_text(web_bundle)
+            + brain_status_text(brain_decision)
+            + _deep_research_status_text(),
+            parse_mode="HTML",
+        )
+
+        extra_context_parts = []
+        if memory_context:
+            extra_context_parts.append("Контекст групповой переписки:\n" + memory_context)
+        if reply_context:
+            extra_context_parts.append("Контекст сообщения-ответа:\n" + reply_context)
+
+        research_result = await deep_research.run(
+            user_text=brain_search_text,
+            history=[],
+            mode=intent.mode,
+            extra_context="\n\n".join(extra_context_parts),
+        )
+
+        chunks = split_long_text(research_result.answer)
+        for chunk in chunks:
+            await message.answer(
+                telegram_html_from_ai_text(chunk),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+        sources_html = deep_research.format_sources_html(research_result)
+        if sources_html:
+            await message.answer(
+                sources_html,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+        return
 
     if document_intent.should_generate:
         await _handle_group_document_request(
@@ -1025,6 +1137,7 @@ async def group_text_router(message: Message, bot: Bot) -> None:
     await message.answer(
         _group_status_text(intent, selection, selected_count)
         + _web_status_text(web_bundle)
+        + brain_status_text(brain_decision)
         + personality_status_text(personality_decision),
         parse_mode="HTML",
     )
@@ -1040,6 +1153,12 @@ async def group_text_router(message: Message, bot: Bot) -> None:
         selection=selection,
         saved_messages_count=selected_count,
     )
+
+    if brain_instruction:
+        prompt = f"{prompt}\n\n{brain_instruction}"
+
+    if quality_instruction:
+        prompt = f"{prompt}\n\n{quality_instruction}"
 
     llm = LLMService(settings)
 
@@ -1091,7 +1210,9 @@ async def _handle_group_document_request(
     web_bundle: WebSearchBundle,
 ) -> None:
     await message.answer(
-        _group_document_status_text(document_intent, selection, selected_count) + _web_status_text(web_bundle),
+        _group_document_status_text(document_intent, selection, selected_count)
+        + _web_status_text(web_bundle)
+        + brain_status_text(brain_decision),
         parse_mode="HTML",
     )
 
