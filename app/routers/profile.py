@@ -11,13 +11,19 @@ from app.bot.keyboards import main_keyboard, profile_keyboard, subscription_keyb
 from app.config import get_settings
 from app.services.limits import (
     get_plan_limits,
-    next_plan_suggestion,
     plan_display_name,
-    plan_features,
-    stars_pricing_summary,
     usage_line,
 )
 from app.services.payments import format_plan_expiry
+from app.services.subscription_copy import (
+    feature_lines,
+    locked_features,
+    plan_badge,
+    plan_positioning,
+    recommended_upgrade,
+    tariff_matrix_text,
+    unlocked_features,
+)
 from app.services.users import ensure_user
 from app.storage.db import connect_db
 from app.storage.repositories import UsageRepository, UserRepository
@@ -43,10 +49,6 @@ class ProfileSnapshot:
     feedback_negative: int
     payments_paid: int
     stars_paid: int
-
-
-def _html_features(features: list[str]) -> str:
-    return "\n".join(f"— {item};" for item in features)
 
 
 async def _count_scalar(db: Any, sql: str, params: tuple[Any, ...] = ()) -> int:
@@ -159,25 +161,31 @@ async def _load_profile_snapshot(message: Message) -> ProfileSnapshot:
 @router.message(lambda message: message.text == "👤 Профиль")
 async def profile_handler(message: Message) -> None:
     snapshot = await _load_profile_snapshot(message)
-
     expires_text = format_plan_expiry(snapshot.plan_expires_at, snapshot.plan)
 
-    admin_note = ""
-    if snapshot.plan == "admin":
-        admin_note = "\n🛡 <b>Admin</b>: лимиты отключены, оплата не требуется.\n"
+    locked = locked_features(snapshot.plan)
+    locked_block = ""
+    if locked:
+        locked_block = (
+            "\n🔒 <b>Закрыто на текущем тарифе</b>\n"
+            f"{feature_lines(locked)}\n"
+        )
 
     await message.answer(
         "👤 <b>Профиль</b>\n\n"
-        "Короткий центр управления твоим рабочим AI-контуром.\n\n"
-        f"🪪 <b>Тариф:</b> {plan_display_name(snapshot.plan)}\n"
+        "Это не просто статистика. Это твой кабинет доступа к рабочему AI-контуру.\n\n"
+        f"🪪 <b>Тариф:</b> {plan_badge(snapshot.plan)}\n"
         f"⏳ <b>Действует до:</b> <code>{expires_text}</code>\n"
-        f"{admin_note}\n"
+        f"🧭 <b>Позиционирование:</b> {plan_positioning(snapshot.plan)}\n\n"
         "📌 <b>Быстрый обзор</b>\n"
         f"— проектов: <code>{snapshot.projects_total}</code>;\n"
         f"— документов: <code>{snapshot.documents_total}</code>;\n"
         f"— сообщений: <code>{snapshot.messages_total}</code>;\n"
         f"— оценок ответов: <code>{snapshot.feedback_total}</code>.\n\n"
-        "Выбери, что открыть ниже.",
+        "✅ <b>Открыто сейчас</b>\n"
+        f"{feature_lines(unlocked_features(snapshot.plan))}\n"
+        f"{locked_block}\n"
+        "Выбери ниже: лимиты, активность или подписка.",
         reply_markup=profile_keyboard(),
         parse_mode="HTML",
     )
@@ -189,21 +197,17 @@ async def limits_handler(message: Message) -> None:
     snapshot = await _load_profile_snapshot(message)
     limits = get_plan_limits(settings=settings, plan=snapshot.plan)
 
-    plan_note = ""
-    if snapshot.plan == "admin":
-        plan_note = "\n🛡 <b>Admin-режим:</b> дневные лимиты отключены.\n"
-
     await message.answer(
         "📊 <b>Лимиты</b>\n\n"
         f"Тариф: <b>{plan_display_name(snapshot.plan)}</b>\n"
-        f"{plan_note}\n"
+        f"Смысл тарифа: {plan_positioning(snapshot.plan)}\n\n"
         "<b>Сегодня</b>\n"
         f"{usage_line('Текст', snapshot.text_used, limits.text_limit)}\n"
         f"{usage_line('Голосовые', snapshot.voice_used, limits.voice_limit)}\n\n"
         "<b>Активность сегодня</b>\n"
         f"— сообщений: <code>{snapshot.messages_today}</code>;\n"
         f"— документов: <code>{snapshot.documents_today}</code>.\n\n"
-        "Лимиты обновляются ежедневно.",
+        "Лимиты обновляются ежедневно. Чем тяжелее сценарий, тем больше ценности даёт Pro/Business.",
         reply_markup=profile_keyboard(),
         parse_mode="HTML",
     )
@@ -213,9 +217,14 @@ async def limits_handler(message: Message) -> None:
 async def activity_handler(message: Message) -> None:
     snapshot = await _load_profile_snapshot(message)
 
+    quality_hint = "нужны оценки"
+    if snapshot.feedback_total:
+        positive_rate = int((snapshot.feedback_positive / max(snapshot.feedback_total, 1)) * 100)
+        quality_hint = f"{positive_rate}% полезных оценок"
+
     await message.answer(
         "📈 <b>Активность</b>\n\n"
-        "Твоя рабочая статистика внутри бота.\n\n"
+        "Это рабочий след: сколько раз бот помог превратить запрос в результат.\n\n"
         "<b>Всего</b>\n"
         f"— сообщений: <code>{snapshot.messages_total}</code>;\n"
         f"— активных проектов: <code>{snapshot.projects_total}</code>;\n"
@@ -226,8 +235,9 @@ async def activity_handler(message: Message) -> None:
         f"— документов: <code>{snapshot.documents_today}</code>.\n\n"
         "<b>Качество ответов</b>\n"
         f"— полезно: <code>{snapshot.feedback_positive}</code>;\n"
-        f"— не то: <code>{snapshot.feedback_negative}</code>.\n\n"
-        "Чем больше оценок, тем проще понимать, где бот реально попадает, а где надо докручивать.",
+        f"— не то: <code>{snapshot.feedback_negative}</code>;\n"
+        f"— индекс качества: <code>{quality_hint}</code>.\n\n"
+        "Чем чаще ты оцениваешь ответы, тем проще докручивать продукт без гадания на логах.",
         reply_markup=profile_keyboard(),
         parse_mode="HTML",
     )
@@ -236,31 +246,22 @@ async def activity_handler(message: Message) -> None:
 @router.message(lambda message: message.text == "💎 Подписка")
 async def subscription_profile_handler(message: Message) -> None:
     snapshot = await _load_profile_snapshot(message)
-    features = plan_features(snapshot.plan)
     expires_text = format_plan_expiry(snapshot.plan_expires_at, snapshot.plan)
-
-    plan_note = ""
-    if snapshot.plan == "admin":
-        plan_note = "\n🛡 <b>Admin</b>: оплата не требуется, лимиты отключены.\n"
-    elif snapshot.plan in {"pro", "business"}:
-        plan_note = "\n♻️ Подписку можно продлить заранее. Новый срок прибавится к текущей дате окончания.\n"
 
     await message.answer(
         "💎 <b>Подписка</b>\n\n"
-        f"Текущий тариф: <b>{plan_display_name(snapshot.plan)}</b>\n"
-        f"Действует до: <code>{expires_text}</code>\n"
-        f"{plan_note}\n"
-        "🧩 <b>Доступно сейчас</b>\n"
-        f"{_html_features(features)}\n\n"
-        f"{next_plan_suggestion(snapshot.plan)}\n\n"
-        "⭐ <b>Цены в Telegram Stars</b>\n"
-        f"{stars_pricing_summary()}\n\n"
+        f"Сейчас: <b>{plan_badge(snapshot.plan)}</b>\n"
+        f"Действует до: <code>{expires_text}</code>\n\n"
+        f"{recommended_upgrade(snapshot.plan)}\n\n"
+        "━━━━━━━━━━━━━━\n"
+        f"{tariff_matrix_text()}\n\n"
         "<b>История оплат</b>\n"
         f"— успешных оплат: <code>{snapshot.payments_paid}</code>;\n"
         f"— Stars оплачено: <code>{snapshot.stars_paid}</code>.\n\n"
         "Оплата проходит внутри Telegram. После оплаты тариф активируется автоматически.",
         reply_markup=subscription_keyboard(),
         parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -271,19 +272,26 @@ async def miniapp_hint_handler(message: Message) -> None:
     if settings.mini_app_url.strip():
         await message.answer(
             "🌐 <b>Mini App</b>\n\n"
-            "Кабинет вынесен отдельно от нижнего меню, чтобы не захламлять главный таскбар.\n\n"
+            "Это кабинет управления, а не просто красивая витрина.\n\n"
+            "<b>Что внутри</b>\n"
+            "— проекты;\n"
+            "— документы;\n"
+            "— группы;\n"
+            "— профиль;\n"
+            "— подписка;\n"
+            "— история результата.\n\n"
             "<b>Как открыть</b>\n"
             "— нажми системную кнопку рядом с полем ввода;\n"
-            "— или отправь команду <code>/miniapp</code>.\n\n"
-            "Там доступны проекты, документы, подписка и рабочая статистика.",
+            "— или отправь команду <code>/miniapp</code>.",
             reply_markup=profile_keyboard(),
             parse_mode="HTML",
+            disable_web_page_preview=True,
         )
         return
 
     await message.answer(
         "🌐 <b>Mini App пока не подключён</b>\n\n"
-        "В `.env` нужно указать:\n"
+        "В <code>.env</code> нужно указать:\n"
         "<code>MINI_APP_URL=https://...</code>\n\n"
         "После этого перезапусти бота.",
         reply_markup=profile_keyboard(),
@@ -295,7 +303,7 @@ async def miniapp_hint_handler(message: Message) -> None:
 async def profile_back_to_main_handler(message: Message) -> None:
     await message.answer(
         "🏠 <b>Главное меню</b>\n\n"
-        "Теперь здесь только два входа: 🧠 Режимы и 👤 Профиль.",
+        "Две главные точки входа: 🧠 Режимы и 👤 Профиль.",
         reply_markup=main_keyboard(),
         parse_mode="HTML",
     )

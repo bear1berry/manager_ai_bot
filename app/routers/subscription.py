@@ -8,13 +8,7 @@ from aiogram.types import LabeledPrice, Message, PreCheckoutQuery
 
 from app.bot.keyboards import main_keyboard, subscription_keyboard
 from app.config import get_settings
-from app.services.limits import (
-    BUSINESS_STARS_PRICE,
-    PRO_STARS_PRICE,
-    SUBSCRIPTION_DAYS,
-    get_plan_limits,
-    plan_display_name,
-)
+from app.services.limits import plan_display_name
 from app.services.payments import (
     build_stars_plan,
     calculate_expiry,
@@ -22,6 +16,7 @@ from app.services.payments import (
     payment_success_text,
     validate_stars_payload,
 )
+from app.services.subscription_copy import invoice_intro_text, tariff_matrix_text
 from app.services.users import ensure_user
 from app.storage.db import connect_db
 from app.storage.repositories import PaymentRepository, UserRepository
@@ -30,46 +25,13 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-def _tariff_card(settings) -> str:
-    free = get_plan_limits(settings, "free")
-    pro = get_plan_limits(settings, "pro")
-    business = get_plan_limits(settings, "business")
-
-    return (
-        "💎 <b>Подписка через Telegram Stars</b>\n\n"
-        "Оплата проходит внутри Telegram. После успешной оплаты тариф активируется автоматически на 30 дней.\n\n"
-        "🆓 <b>Free</b>\n"
-        f"— текст: <code>{free.text_limit}/день</code>;\n"
-        f"— голосовые: <code>{free.voice_limit}/день</code>;\n"
-        "— базовый ассистент;\n"
-        "— проекты и документы в MVP-режиме.\n\n"
-        f"💎 <b>Pro — {PRO_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</b>\n"
-        f"— текст: <code>{pro.text_limit}/день</code>;\n"
-        f"— голосовые: <code>{pro.voice_limit}/день</code>;\n"
-        "— DOCX/PDF документы;\n"
-        "— больше проектной работы;\n"
-        "— комфортный ежедневный режим.\n\n"
-        f"🏢 <b>Business — {BUSINESS_STARS_PRICE} ⭐ / {SUBSCRIPTION_DAYS} дней</b>\n"
-        f"— текст: <code>{business.text_limit}/день</code>;\n"
-        f"— голосовые: <code>{business.voice_limit}/день</code>;\n"
-        "— максимальные лимиты MVP;\n"
-        "— больше пространства под активную работу;\n"
-        "— база под будущие бизнес-шаблоны.\n\n"
-        "<b>Как оплатить</b>\n"
-        "— выбери тариф в нижнем меню;\n"
-        "— Telegram покажет счёт в Stars;\n"
-        "— после оплаты тариф включится сам."
-    )
-
-
 @router.message(lambda message: message.text == "💎 Подписка")
 async def subscription_handler(message: Message) -> None:
-    settings = get_settings()
-
     await message.answer(
-        _tariff_card(settings),
+        tariff_matrix_text(),
         reply_markup=subscription_keyboard(),
         parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -98,30 +60,22 @@ async def plan_request_handler(message: Message, bot: Bot) -> None:
 
         current_plan = str(user["plan"] or "free").lower()
         current_expires_at = user["plan_expires_at"]
+        current_expires_text = format_plan_expiry(current_expires_at, current_plan)
 
         if current_plan == "admin":
             await message.answer(
                 "🛡 <b>Admin активен</b>\n\n"
-                "Оплата тебе не требуется: лимиты отключены, доступ полный.",
+                "Оплата не требуется: лимиты отключены, доступ полный.",
                 reply_markup=main_keyboard(),
                 parse_mode="HTML",
             )
             return
 
-        if current_plan == selected_plan:
-            await message.answer(
-                f"♻️ <b>{stars_plan.title} уже активен</b>\n\n"
-                f"Действует до: <code>{format_plan_expiry(current_expires_at, current_plan)}</code>\n\n"
-                "Можно продлить тариф ещё на 30 дней. "
-                "После оплаты новая дата окончания будет рассчитана от текущей даты окончания подписки.",
-                parse_mode="HTML",
-            )
-
         if current_plan == "business" and selected_plan == "pro":
             await message.answer(
                 "🏢 <b>Business уже активен</b>\n\n"
                 "Pro покупать не нужно: Business выше по возможностям и лимитам.\n\n"
-                f"Действует до: <code>{format_plan_expiry(current_expires_at, current_plan)}</code>",
+                f"Действует до: <code>{current_expires_text}</code>",
                 reply_markup=main_keyboard(),
                 parse_mode="HTML",
             )
@@ -135,12 +89,13 @@ async def plan_request_handler(message: Message, bot: Bot) -> None:
         )
 
     await message.answer(
-        "⭐ <b>Создаю счёт Telegram Stars</b>\n\n"
-        f"Тариф: <b>{stars_plan.title}</b>\n"
-        f"Срок: <code>{stars_plan.days} дней</code>\n"
-        f"Стоимость: <code>{stars_plan.stars_amount} ⭐</code>\n\n"
-        "После оплаты тариф включится автоматически.",
+        invoice_intro_text(
+            selected_plan=selected_plan,
+            current_plan=current_plan,
+            current_expires_text=current_expires_text,
+        ),
         parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
     await bot.send_invoice(
