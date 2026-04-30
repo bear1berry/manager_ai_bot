@@ -40,6 +40,7 @@ async def setup_bot_commands(bot: Bot) -> None:
         BotCommand(command="admin_audit", description="Audit Log"),
         BotCommand(command="admin_audit_user", description="Audit пользователя"),
         BotCommand(command="admin_status", description="Центр состояния системы"),
+        BotCommand(command="admin_llm_usage", description="LLM usage"),
         BotCommand(command="stats", description="Статистика продукта"),
         BotCommand(command="feedback", description="Оценки ответов"),
         BotCommand(command="payments", description="Платежи Stars"),

@@ -106,6 +106,39 @@ ON queue(status, id);
 
 
 
+
+CREATE TABLE IF NOT EXISTS llm_usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    telegram_id INTEGER,
+    chat_id INTEGER,
+    feature TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    route_tier TEXT NOT NULL,
+    route_reason TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_usd REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ok',
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_created
+ON llm_usage_events(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user_created
+ON llm_usage_events(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_feature_created
+ON llm_usage_events(feature, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_model_created
+ON llm_usage_events(model, created_at);
+
 CREATE TABLE IF NOT EXISTS audit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_type TEXT NOT NULL,
@@ -355,6 +388,46 @@ async def _run_migrations(db: aiosqlite.Connection) -> None:
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_audit_events_chat_created "
         "ON audit_events(chat_id, created_at)"
+    )
+
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_usage_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            telegram_id INTEGER,
+            chat_id INTEGER,
+            feature TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            route_tier TEXT NOT NULL,
+            route_reason TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_usd REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'ok',
+            error TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_usage_created "
+        "ON llm_usage_events(created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_usage_user_created "
+        "ON llm_usage_events(user_id, created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_usage_feature_created "
+        "ON llm_usage_events(feature, created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_llm_usage_model_created "
+        "ON llm_usage_events(model, created_at)"
     )
 
     await db.commit()

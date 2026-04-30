@@ -10,6 +10,7 @@ import aiosqlite
 
 from app.config import Settings
 from app.services.backup import backup_dir, format_bytes, list_backups
+from app.services.costs import llm_usage_stats_24h
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ async def build_admin_status_text(db: aiosqlite.Connection, settings: Settings) 
     items.extend(await _database_items(db))
     items.extend(await _queue_items(db))
     items.extend(await _payment_items(db))
+    items.extend(await _llm_items(db))
     items.extend(await _abuse_items(db))
     items.extend(await _audit_items(db))
     items.extend(_backup_items())
@@ -192,6 +194,24 @@ async def _payment_items(db: aiosqlite.Connection) -> list[HealthItem]:
         ]
     except Exception as exc:
         return [HealthItem("PAYMENTS", False, str(exc)[:160])]
+
+
+
+async def _llm_items(db: aiosqlite.Connection) -> list[HealthItem]:
+    try:
+        stats = await llm_usage_stats_24h(db)
+        requests = int(stats["requests"])
+        cost = float(stats["estimated_cost_usd"])
+        statuses = stats.get("statuses", {})
+        failed = int(statuses.get("failed", 0))
+
+        return [
+            HealthItem("LLM_REQUESTS_24H", True, str(requests)),
+            HealthItem("LLM_FAILED_24H", failed == 0, str(failed), "Есть падения LLM. Открой /admin_llm_usage." if failed else ""),
+            HealthItem("LLM_COST_24H", cost < 5, f"${cost:.6f}", "Расход LLM заметный. Проверь маршруты моделей." if cost >= 5 else ""),
+        ]
+    except Exception as exc:
+        return [HealthItem("LLM_USAGE", False, str(exc)[:160])]
 
 
 async def _abuse_items(db: aiosqlite.Connection) -> list[HealthItem]:
@@ -361,6 +381,8 @@ def _group_for_item(name: str) -> str:
         return "Очередь"
     if name.startswith(("PAYMENTS", "STARS")):
         return "Платежи"
+    if name.startswith("LLM"):
+        return "LLM Usage"
     if name.startswith("ABUSE"):
         return "Abuse Control"
     if name.startswith("AUDIT"):

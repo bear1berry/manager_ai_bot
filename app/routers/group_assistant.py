@@ -1299,6 +1299,9 @@ async def _handle_group_document_request(
             source_text=source_text,
             doc_type=document_intent.doc_type,
             title=document_intent.doc_title,
+            user_id=user_db_id,
+            telegram_id=message.from_user.id if message.from_user else None,
+            chat_id=message.chat.id,
         )
 
         service = DocumentService(settings)

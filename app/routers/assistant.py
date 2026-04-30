@@ -725,7 +725,15 @@ async def _process_text_request(
 
     try:
         llm = LLMService(settings)
-        answer = await llm.complete(user_text=enriched_text, history=history, mode=intent.mode)
+        answer = await llm.complete(
+        user_text=enriched_text,
+        history=history,
+        mode=intent.mode,
+        user_id=user_db_id,
+        telegram_id=message.from_user.id if message.from_user else None,
+        chat_id=message.chat.id,
+        feature="chat",
+    )
     except Exception:
         logger.exception("Assistant LLM flow failed")
         await message.answer(
@@ -811,6 +819,9 @@ async def _handle_direct_document_followup(
             source_text=source_text,
             doc_type=document_intent.doc_type,
             title=document_intent.title,
+            user_id=user_db_id,
+            telegram_id=message.from_user.id if message.from_user else None,
+            chat_id=message.chat.id,
         )
 
         service = DocumentService(settings)

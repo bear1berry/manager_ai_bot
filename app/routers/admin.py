@@ -16,6 +16,7 @@ from app.services.audit import (
     latest_audit_events,
     safe_record_audit_event,
 )
+from app.services.costs import latest_llm_usage, llm_usage_stats_24h
 from app.services.backup import (
     backup_created_text,
     backup_list_text,
@@ -584,6 +585,69 @@ async def admin_status_handler(message: Message) -> None:
 
     await message.answer(
         status_text,
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+
+@router.message(Command("admin_llm_usage"))
+async def admin_llm_usage_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        stats = await llm_usage_stats_24h(db)
+        rows = await latest_llm_usage(db, limit=15)
+
+    lines = [
+        "🧠 <b>LLM Usage</b>\n",
+        "<b>Последние 24 часа</b>",
+        f"— запросов: <code>{stats['requests']}</code>;",
+        f"— input tokens: <code>{stats['input_tokens']}</code>;",
+        f"— output tokens: <code>{stats['output_tokens']}</code>;",
+        f"— estimated cost: <code>${stats['estimated_cost_usd']:.6f}</code>;",
+        "",
+        "<b>Статусы</b>",
+    ]
+
+    if stats["statuses"]:
+        for key, value in stats["statuses"].items():
+            lines.append(f"— <code>{html.escape(key)}</code>: <b>{value}</b>")
+    else:
+        lines.append("— пока нет данных.")
+
+    lines.append("\n<b>Маршруты</b>")
+    if stats["tiers"]:
+        for key, value in stats["tiers"].items():
+            lines.append(f"— <code>{html.escape(key)}</code>: <b>{value}</b>")
+    else:
+        lines.append("— пока нет данных.")
+
+    lines.append("\n<b>Последние запросы</b>")
+
+    if rows:
+        for row in rows:
+            lines.append(
+                f"\nID: <code>{row['id']}</code>\n"
+                f"Feature: <code>{html.escape(str(row['feature']))}</code>\n"
+                f"Mode: <code>{html.escape(str(row['mode']))}</code>\n"
+                f"Model: <code>{html.escape(str(row['model']))}</code>\n"
+                f"Tier: <code>{html.escape(str(row['route_tier']))}</code>\n"
+                f"Status: <code>{html.escape(str(row['status']))}</code>\n"
+                f"Tokens: <code>{row['input_tokens']} / {row['output_tokens']}</code>\n"
+                f"Cost: <code>${float(row['estimated_cost_usd'] or 0):.8f}</code>\n"
+                f"At: <code>{row['created_at']}</code>"
+            )
+    else:
+        lines.append("— событий пока нет.")
+
+    await message.answer(
+        "\n".join(lines),
         reply_markup=main_keyboard(),
         parse_mode="HTML",
         disable_web_page_preview=True,

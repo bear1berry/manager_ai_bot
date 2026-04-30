@@ -8,6 +8,9 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.services.costs import estimate_llm_usage, record_llm_usage
+from app.services.model_router import ModelRoute, choose_model_route
+from app.storage.db import connect_db
 from app.utils.text import make_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -22,6 +25,10 @@ class LLMService:
         user_text: str,
         history: list[dict[str, str]] | None = None,
         mode: str = "assistant",
+        user_id: int | None = None,
+        telegram_id: int | None = None,
+        chat_id: int | None = None,
+        feature: str = "chat",
     ) -> str:
         if not self.settings.llm_api_key:
             return self._fallback_answer(user_text)
@@ -40,10 +47,88 @@ class LLMService:
             }
         )
 
+        route = choose_model_route(
+            settings=self.settings,
+            user_text=user_text,
+            mode=mode,
+            purpose=feature,
+        )
+
         try:
-            return await self._request_text(messages=messages, max_tokens=2200, temperature=0.35)
-        except Exception:
-            logger.exception("LLM request failed")
+            answer = await self._request_text(
+                messages=messages,
+                max_tokens=route.max_tokens,
+                temperature=route.temperature,
+                model=route.model,
+            )
+            await self._record_usage_safe(
+                messages=messages,
+                answer=answer,
+                route=route,
+                model=route.model,
+                user_id=user_id,
+                telegram_id=telegram_id,
+                chat_id=chat_id,
+                feature=feature,
+                mode=mode,
+                status="ok",
+            )
+            return answer
+        except Exception as first_exc:
+            logger.exception("LLM request failed on model=%s", route.model)
+
+            if route.fallback_model and route.fallback_model != route.model:
+                try:
+                    answer = await self._request_text(
+                        messages=messages,
+                        max_tokens=route.max_tokens,
+                        temperature=route.temperature,
+                        model=route.fallback_model,
+                    )
+                    await self._record_usage_safe(
+                        messages=messages,
+                        answer=answer,
+                        route=route,
+                        model=route.fallback_model,
+                        user_id=user_id,
+                        telegram_id=telegram_id,
+                        chat_id=chat_id,
+                        feature=feature,
+                        mode=mode,
+                        status="fallback_ok",
+                        error=str(first_exc),
+                    )
+                    return answer
+                except Exception as fallback_exc:
+                    logger.exception("LLM fallback request failed on model=%s", route.fallback_model)
+                    await self._record_usage_safe(
+                        messages=messages,
+                        answer="",
+                        route=route,
+                        model=route.fallback_model,
+                        user_id=user_id,
+                        telegram_id=telegram_id,
+                        chat_id=chat_id,
+                        feature=feature,
+                        mode=mode,
+                        status="failed",
+                        error=str(fallback_exc),
+                    )
+            else:
+                await self._record_usage_safe(
+                    messages=messages,
+                    answer="",
+                    route=route,
+                    model=route.model,
+                    user_id=user_id,
+                    telegram_id=telegram_id,
+                    chat_id=chat_id,
+                    feature=feature,
+                    mode=mode,
+                    status="failed",
+                    error=str(first_exc),
+                )
+
             return (
                 "⚠️ **ИИ-сервис временно не ответил**\n\n"
                 "**Что случилось**\n"
@@ -59,6 +144,9 @@ class LLMService:
         source_text: str,
         doc_type: str,
         title: str,
+        user_id: int | None = None,
+        telegram_id: int | None = None,
+        chat_id: int | None = None,
     ) -> dict[str, Any]:
         source_text = source_text.strip()
         if not source_text:
@@ -121,8 +209,33 @@ class LLMService:
             {"role": "user", "content": user_prompt},
         ]
 
+        route = choose_model_route(
+            settings=self.settings,
+            user_text=source_text,
+            mode=doc_type,
+            purpose="document",
+        )
+
         try:
-            raw = await self._request_text(messages=messages, max_tokens=2600, temperature=0.25)
+            raw = await self._request_text(
+                messages=messages,
+                max_tokens=route.max_tokens,
+                temperature=route.temperature,
+                model=route.model,
+            )
+            await self._record_usage_safe(
+                messages=messages,
+                answer=raw,
+                route=route,
+                model=route.model,
+                user_id=user_id,
+                telegram_id=telegram_id,
+                chat_id=chat_id,
+                feature="document",
+                mode=doc_type,
+                status="ok",
+            )
+
             data = self._parse_json_object(raw)
             normalized = self._normalize_document_data(data=data, fallback_title=title)
 
@@ -130,8 +243,50 @@ class LLMService:
                 raise ValueError("LLM document has empty sections")
 
             return normalized
-        except Exception:
-            logger.exception("LLM document generation failed")
+        except Exception as first_exc:
+            logger.exception("LLM document generation failed on model=%s", route.model)
+
+            if route.fallback_model and route.fallback_model != route.model:
+                try:
+                    raw = await self._request_text(
+                        messages=messages,
+                        max_tokens=route.max_tokens,
+                        temperature=route.temperature,
+                        model=route.fallback_model,
+                    )
+                    await self._record_usage_safe(
+                        messages=messages,
+                        answer=raw,
+                        route=route,
+                        model=route.fallback_model,
+                        user_id=user_id,
+                        telegram_id=telegram_id,
+                        chat_id=chat_id,
+                        feature="document",
+                        mode=doc_type,
+                        status="fallback_ok",
+                        error=str(first_exc),
+                    )
+                    data = self._parse_json_object(raw)
+                    normalized = self._normalize_document_data(data=data, fallback_title=title)
+                    if normalized["sections"]:
+                        return normalized
+                except Exception as fallback_exc:
+                    logger.exception("LLM document fallback failed")
+                    await self._record_usage_safe(
+                        messages=messages,
+                        answer="",
+                        route=route,
+                        model=route.fallback_model,
+                        user_id=user_id,
+                        telegram_id=telegram_id,
+                        chat_id=chat_id,
+                        feature="document",
+                        mode=doc_type,
+                        status="failed",
+                        error=str(fallback_exc),
+                    )
+
             return self._fallback_document_data(title=title, source_text=source_text, doc_type=doc_type)
 
     async def _request_text(
@@ -139,11 +294,12 @@ class LLMService:
         messages: list[dict[str, str]],
         max_tokens: int,
         temperature: float,
+        model: str,
     ) -> str:
         url = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
 
         payload = {
-            "model": self.settings.llm_model,
+            "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -160,6 +316,49 @@ class LLMService:
             data = response.json()
 
         return data["choices"][0]["message"]["content"].strip()
+
+    async def _record_usage_safe(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        answer: str,
+        route: ModelRoute,
+        model: str,
+        user_id: int | None,
+        telegram_id: int | None,
+        chat_id: int | None,
+        feature: str,
+        mode: str,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        try:
+            usage = estimate_llm_usage(
+                model=model,
+                messages=messages,
+                output_text=answer,
+            )
+
+            async with await connect_db(self.settings.database_path) as db:
+                await record_llm_usage(
+                    db,
+                    user_id=user_id,
+                    telegram_id=telegram_id,
+                    chat_id=chat_id,
+                    feature=feature,
+                    mode=mode,
+                    provider="openai-compatible",
+                    model=model,
+                    route_tier=route.tier,
+                    route_reason=route.reason,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    estimated_cost_usd=usage.estimated_cost_usd,
+                    status=status,
+                    error=error,
+                )
+        except Exception:
+            logger.exception("Failed to record LLM usage")
 
     @staticmethod
     def _build_user_prompt(user_text: str, mode: str) -> str:
@@ -294,24 +493,12 @@ class LLMService:
                 "- выбрать лучший формат ответа без лишних уточнений;\n"
                 "- дать полезный результат, который можно применить сразу;\n"
                 "- показать, что бот умеет больше, чем документы и проекты.\n\n"
-                "Как выбирать формат:\n"
-                "- если пользователь просит объяснение — объясни просто, структурно и с примерами;\n"
-                "- если просит решение — дай варианты и выбери лучший;\n"
-                "- если просит план — дай пошаговый план;\n"
-                "- если просит текст — дай готовый текст;\n"
-                "- если просит идею — дай несколько сильных вариантов;\n"
-                "- если описывает хаос — сначала выдели суть, потом порядок действий;\n"
-                "- если запрос связан с бизнесом/продуктом — думай как продакт: ценность, пользователь, гипотеза, риск, следующий шаг;\n"
-                "- если запрос связан с медициной/здоровьем — отвечай осторожно, без диагноза по переписке, с акцентом на безопасность и обращение к врачу при красных флагах;\n"
-                "- если данных мало — сделай разумные допущения и явно отметь их;\n"
-                "- если без уточнения можно ошибиться критично — задай 1 короткий вопрос, но всё равно дай предварительный ориентир.\n\n"
                 "Стиль ответа:\n"
                 "- русский язык;\n"
                 "- короткие заголовки;\n"
                 "- жирное выделение важных смыслов;\n"
                 "- списки через тире;\n"
                 "- без воды;\n"
-                "- без непонятных символов;\n"
                 "- уверенно, практично, спокойно;\n"
                 "- в конце почти всегда дай блок «Что сделать дальше».\n\n"
                 "Базовая структура, если формат не очевиден:\n"
@@ -324,7 +511,18 @@ class LLMService:
         }
 
         prompt = mode_prompts.get(mode, mode_prompts["assistant"])
-        return f"{prompt}\n\nВводные пользователя:\n{user_text}"
+
+        quality_note = (
+            "\n\nГлобальный стандарт качества:\n"
+            "- сначала ответь на реальный запрос пользователя;\n"
+            "- не лей воду;\n"
+            "- отделяй факты от предположений;\n"
+            "- если данных мало — скажи честно;\n"
+            "- если есть web-контекст — не выдумывай актуальные факты вне него;\n"
+            "- в конце дай практичный следующий шаг, если это уместно."
+        )
+
+        return f"{prompt}{quality_note}\n\nВводные пользователя:\n{user_text}"
 
     @staticmethod
     def _parse_json_object(raw: str) -> dict[str, Any]:

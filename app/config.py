@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_model: str = Field(default="deepseek-chat", alias="LLM_MODEL")
+    llm_fast_model: str = Field(default="deepseek-chat", alias="LLM_FAST_MODEL")
+    llm_heavy_model: str = Field(default="deepseek-chat", alias="LLM_HEAVY_MODEL")
+    llm_fallback_model: str = Field(default="deepseek-chat", alias="LLM_FALLBACK_MODEL")
     llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
 
     web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")

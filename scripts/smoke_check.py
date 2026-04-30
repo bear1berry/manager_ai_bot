@@ -30,6 +30,8 @@ MODULES = [
     "app.services.privacy",
     "app.services.audit",
     "app.services.observability",
+    "app.services.costs",
+    "app.services.model_router",
     "app.routers.privacy",
     "app.services.llm",
     "app.services.documents",
