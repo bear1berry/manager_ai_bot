@@ -13,6 +13,13 @@ from app.config import Settings
 from app.services.limits import get_plan_limits, plan_display_name
 from app.services.miniapp_auth import extract_user_from_init_data, verify_telegram_init_data
 from app.services.payments import format_plan_expiry
+from app.services.subscription_copy import (
+    locked_features,
+    plan_badge,
+    plan_positioning,
+    recommended_upgrade,
+    unlocked_features,
+)
 from app.storage.db import connect_db
 from app.storage.repositories import DocumentRepository, UserRepository
 
@@ -211,8 +218,13 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
         "subscription": {
             "plan": plan,
             "plan_name": plan_display_name(plan),
+            "plan_badge": plan_badge(plan),
+            "positioning": plan_positioning(plan),
             "expires_at": user["plan_expires_at"],
             "expires_text": format_plan_expiry(user["plan_expires_at"], plan),
+            "unlocked_features": unlocked_features(plan),
+            "locked_features": locked_features(plan),
+            "recommended_upgrade": recommended_upgrade(plan),
         },
         "limits": {
             "text": {
@@ -771,8 +783,35 @@ def _demo_payload() -> dict[str, Any]:
         "subscription": {
             "plan": "free",
             "plan_name": "Free",
+            "plan_badge": "🆓 Free",
+            "positioning": "Стартовый контур: попробовать AI-менеджера, понять ценность и базовые сценарии.",
             "expires_at": None,
             "expires_text": "—",
+            "unlocked_features": [
+                "универсальный AI-ассистент",
+                "режимы: клиент, хаос, план, продукт, стратег",
+                "базовая работа с проектами",
+                "Mini App как кабинет"
+            ],
+            "locked_features": [
+                "Deep Research",
+                "DOCX/PDF документы",
+                "документ из диалога",
+                "документ из проекта",
+                "групповые документы",
+                "память Telegram-группы",
+                "командные сценарии Business"
+            ],
+            "recommended_upgrade": (
+                "💎 Рекомендуемый апгрейд: Pro\n"
+                "Стоимость: 299 ⭐ / 30 дней.\n\n"
+                "Почему Pro\n"
+                "— открывает Deep Research;\n"
+                "— включает DOCX/PDF;\n"
+                "— превращает диалог в документ;\n"
+                "— даёт больше лимитов;\n"
+                "— подходит для личной рабочей продуктивности."
+            ),
         },
         "limits": {
             "text": {

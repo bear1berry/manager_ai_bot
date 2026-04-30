@@ -58,8 +58,13 @@ export type MiniAppData = {
   subscription: {
     plan: string;
     plan_name: string;
+    plan_badge?: string;
+    positioning?: string;
     expires_at?: string | null;
     expires_text: string;
+    unlocked_features?: string[];
+    locked_features?: string[];
+    recommended_upgrade?: string;
   };
   limits: {
     text: {

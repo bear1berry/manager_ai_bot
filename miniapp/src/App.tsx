@@ -55,7 +55,26 @@ const fallbackData: MiniAppData = {
   subscription: {
     plan: "free",
     plan_name: "Free",
-    expires_text: "—"
+    plan_badge: "🆓 Free",
+    positioning: "Стартовый контур: попробовать AI-менеджера, понять ценность и базовые сценарии.",
+    expires_text: "—",
+    unlocked_features: [
+      "универсальный AI-ассистент",
+      "режимы: клиент, хаос, план, продукт, стратег",
+      "базовая работа с проектами",
+      "Mini App как кабинет"
+    ],
+    locked_features: [
+      "Deep Research",
+      "DOCX/PDF документы",
+      "документ из диалога",
+      "документ из проекта",
+      "групповые документы",
+      "память Telegram-группы",
+      "командные сценарии Business"
+    ],
+    recommended_upgrade:
+      "💎 Рекомендуемый апгрейд: Pro\nСтоимость: 299 ⭐ / 30 дней.\n\nПочему Pro\n— открывает Deep Research;\n— включает DOCX/PDF;\n— превращает диалог в документ;\n— даёт больше лимитов;\n— подходит для личной рабочей продуктивности."
   },
   limits: {
     text: { used: 3, limit: 20, remaining: 17 },
@@ -571,6 +590,13 @@ function GroupCard({ group }: { group: MiniAppGroup }) {
 }
 
 function SubscriptionScreen({ data }: { data: MiniAppData }) {
+  const textLimit = formatLimit(data.limits.text.limit);
+  const voiceLimit = formatLimit(data.limits.voice.limit);
+  const unlocked = data.subscription.unlocked_features || [];
+  const locked = data.subscription.locked_features || [];
+  const planBadge = data.subscription.plan_badge || data.subscription.plan_name;
+  const positioning = data.subscription.positioning || "Рабочий AI-контур под твои задачи.";
+
   return (
     <>
       <div className="section-heading">
@@ -578,27 +604,99 @@ function SubscriptionScreen({ data }: { data: MiniAppData }) {
         <h2>Подписка</h2>
       </div>
 
-      <section className="subscription-hero">
-        <span className="panel-kicker">Текущий тариф</span>
-        <h3>{data.subscription.plan_name}</h3>
-        <p>
-          Действует до: <strong>{data.subscription.expires_text}</strong>
-        </p>
+      <section className="subscription-dashboard-hero">
+        <div>
+          <span className="panel-kicker">Текущий тариф</span>
+          <h3>{planBadge}</h3>
+          <p>{positioning}</p>
+        </div>
+
+        <div className="subscription-expiry">
+          <span>Действует до</span>
+          <strong>{data.subscription.expires_text}</strong>
+        </div>
+      </section>
+
+      <div className="subscription-metrics-grid">
+        <TodayCard label="Текст" value={`${data.limits.text.used}/${textLimit}`} caption={`осталось ${formatLimit(data.limits.text.remaining)}`} />
+        <TodayCard label="Голос" value={`${data.limits.voice.used}/${voiceLimit}`} caption={`осталось ${formatLimit(data.limits.voice.remaining)}`} />
+        <TodayCard label="Оплаты" value={String(data.stats.payments_paid)} caption="успешных" />
+        <TodayCard label="Stars" value={String(data.stats.stars_paid)} caption="оплачено" />
+      </div>
+
+      <section className="subscription-access-grid">
+        <article className="access-card unlocked">
+          <div className="access-card-title">
+            <span>✅</span>
+            <h3>Открыто сейчас</h3>
+          </div>
+          <FeatureList items={unlocked} empty="Базовые функции доступны." />
+        </article>
+
+        <article className="access-card locked">
+          <div className="access-card-title">
+            <span>🔒</span>
+            <h3>Закрыто</h3>
+          </div>
+          <FeatureList items={locked} empty="Все ключевые функции уже открыты." />
+        </article>
+      </section>
+
+      <section className="upgrade-panel">
+        <span className="panel-kicker">Рекомендация</span>
+        <FormattedText text={data.subscription.recommended_upgrade || "Открой подписку в боте, чтобы усилить рабочий контур."} />
       </section>
 
       <div className="plans">
-        <Plan title="Pro" price="299 ⭐" items={["больше запросов", "больше голосовых", "DOCX/PDF", "проекты"]} />
+        <Plan
+          title="Free"
+          price="0 ⭐"
+          items={["базовый ассистент", "режимы", "Mini App", "лимиты на день"]}
+        />
+        <Plan
+          title="Pro"
+          price="299 ⭐"
+          items={["Deep Research", "DOCX/PDF", "документы из диалога", "повышенные лимиты"]}
+        />
         <Plan
           title="Business"
           price="999 ⭐"
-          items={["максимальные лимиты", "активная работа", "документы", "будущие шаблоны"]}
+          items={["всё из Pro", "память группы", "групповые документы", "максимальные лимиты"]}
         />
       </div>
 
       <button className="primary-button" onClick={() => sendToBot("subscription")} type="button">
-        Открыть оплату
+        Открыть подписку в боте
       </button>
     </>
+  );
+}
+
+function FeatureList({ items, empty }: { items: string[]; empty: string }) {
+  if (!items.length) {
+    return <p className="feature-empty">{empty}</p>;
+  }
+
+  return (
+    <ul className="feature-list-compact">
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function FormattedText({ text }: { text: string }) {
+  return (
+    <div className="formatted-text">
+      {text.split("\n").map((line, index) => {
+        if (!line.trim()) {
+          return <br key={`br-${index}`} />;
+        }
+
+        return <p key={`${line}-${index}`}>{line}</p>;
+      })}
+    </div>
   );
 }
 
