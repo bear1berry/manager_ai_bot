@@ -26,6 +26,7 @@ MODULES = [
     "app.services.security",
     "app.services.abuse",
     "app.services.backup",
+    "app.services.backup_scheduler",
     "app.services.privacy",
     "app.routers.privacy",
     "app.services.llm",

@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     business_daily_voice_limit: int = Field(default=200, alias="BUSINESS_DAILY_VOICE_LIMIT")
 
     max_export_file_mb: int = Field(default=45, alias="MAX_EXPORT_FILE_MB")
+    auto_backup_enabled: bool = Field(default=False, alias="AUTO_BACKUP_ENABLED")
+    auto_backup_interval_hours: int = Field(default=24, alias="AUTO_BACKUP_INTERVAL_HOURS")
+    auto_backup_keep_files: int = Field(default=30, alias="AUTO_BACKUP_KEEP_FILES")
+    auto_backup_start_delay_seconds: int = Field(default=120, alias="AUTO_BACKUP_START_DELAY_SECONDS")
     pdf_font_path: str = Field(default="", alias="PDF_FONT_PATH")
 
     @property
