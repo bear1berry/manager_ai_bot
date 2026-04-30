@@ -12,7 +12,13 @@ from aiogram.types import FSInputFile, Message
 
 from app.bot.keyboards import feedback_keyboard, main_keyboard, modes_keyboard
 from app.config import get_settings
-from app.services.documents import DocumentService
+from app.services.brain import (
+    brain_status_text,
+    build_brain_instruction,
+    build_brain_search_text,
+    decide_brain,
+)
+from app.services.deep_research import DeepResearchService
 from app.services.dialogue import (
     build_dialogue_prompt,
     build_document_source_from_dialogue,
@@ -20,6 +26,7 @@ from app.services.dialogue import (
     detect_dialogue_action,
     detect_document_followup_intent,
 )
+from app.services.documents import DocumentService
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
@@ -33,6 +40,7 @@ from app.services.projects import (
     build_prompt_with_project_context,
     should_use_project_context,
 )
+from app.services.quality import build_quality_instruction, decide_quality
 from app.services.queue import enqueue_media_task
 from app.services.users import ensure_user
 from app.services.web_search import WebSearchBundle, WebSearchService
@@ -207,6 +215,7 @@ SERVICE_BUTTONS = {
     "🗂 Демо: проект",
     "📄 Демо: документ",
     "✅ Демо: что дальше",
+    "🌐 Mini App",
 }
 
 
@@ -215,11 +224,7 @@ def _examples_block(examples: list[str]) -> str:
         return ""
 
     lines = "\n".join(f"— <code>{example}</code>" for example in examples)
-
-    return (
-        "💡 <b>Что можно написать</b>\n"
-        f"{lines}"
-    )
+    return "💡 <b>Что можно написать</b>\n" f"{lines}"
 
 
 def _web_status_text(bundle: WebSearchBundle) -> str:
@@ -251,7 +256,7 @@ def _dialogue_status_text(is_followup: bool, title: str) -> str:
 
     return (
         "\n\n💬 <b>Понял продолжение диалога</b>\n"
-        f"Действие: <code>{title}</code>."
+        f"Действие: <code>{html.escape(title)}</code>."
     )
 
 
@@ -260,6 +265,13 @@ def _document_status_text(human_title: str) -> str:
         "\n\n📄 <b>Документ из диалога</b>\n"
         f"Тип: <code>{html.escape(human_title)}</code>.\n"
         "Собираю DOCX/PDF по предыдущему контексту."
+    )
+
+
+def _deep_research_status_text() -> str:
+    return (
+        "\n\n🔎 <b>Deep Research</b>\n"
+        "Запускаю глубокий поиск: несколько запросов, источники, сравнение и выводы."
     )
 
 
@@ -283,6 +295,8 @@ async def assistant_menu_handler(message: Message, state: FSMContext) -> None:
         "Позиционирование, рост, сильные ходы, риски и план удара.\n\n"
         "🌐 <b>Web-поиск</b>\n"
         "Напиши: <code>найди</code>, <code>проверь</code>, <code>актуальные данные</code>, <code>что нового</code>.\n\n"
+        "🔎 <b>Deep Research</b>\n"
+        "Напиши: <code>сделай глубокий ресерч...</code>\n\n"
         "💬 <b>Диалог</b>\n"
         "После ответа можно писать: <code>сделай короче</code>, <code>продолжи</code>, "
         "<code>подробнее</code>, <code>перепиши</code>, <code>проверь это в сети</code>.\n\n"
@@ -477,8 +491,18 @@ async def _process_text_request(
             return
 
         history = await msg_repo.recent(user_id=user_db_id, limit=16)
+
         dialogue_action = detect_dialogue_action(text)
         document_followup_intent = detect_document_followup_intent(text, dialogue_action)
+
+        brain_decision = decide_brain(
+            user_text=text,
+            detected_mode=intent.mode,
+            is_followup=dialogue_action.is_followup,
+            is_document=document_followup_intent.should_generate,
+            is_group=False,
+        )
+
         personality_decision = decide_personality(
             user_text=text,
             mode=intent.mode,
@@ -492,11 +516,16 @@ async def _process_text_request(
             action=dialogue_action,
         )
 
+        brain_search_text = build_brain_search_text(
+            user_text=search_text,
+            decision=brain_decision,
+        )
+
         project_context = ""
         should_search_projects = should_use_project_context(text) or dialogue_action.is_followup
 
         if use_project_context and should_search_projects:
-            project_query = search_text if dialogue_action.needs_web else text
+            project_query = brain_search_text if brain_decision.needs_web else search_text
             found_projects = await project_repo.search_active(user_id=user_db_id, query=project_query, limit=5)
 
             if not found_projects:
@@ -507,15 +536,92 @@ async def _process_text_request(
         await usage_repo.add(user_id=user_db_id, kind="text")
         await msg_repo.add(user_id=user_db_id, role="user", content=text)
 
-    web_service = WebSearchService(settings)
-    web_bundle = await web_service.search_if_needed(search_text)
-    web_context = web_service.build_context(web_bundle)
+    try:
+        web_service = WebSearchService(settings)
+        web_bundle = await web_service.search_if_needed(brain_search_text)
+        web_context = web_service.build_context(web_bundle)
+    except Exception:
+        logger.exception("Web search layer failed")
+        web_service = WebSearchService(settings)
+        web_bundle = await web_service.search_if_needed("")
+        web_context = ""
+
+    quality_decision = decide_quality(
+        user_text=text,
+        mode=intent.mode,
+        has_web_context=bool(web_context),
+        is_deep_research=False,
+        is_document=document_followup_intent.should_generate,
+        is_group=False,
+    )
+
+    deep_research = DeepResearchService(settings)
+    if deep_research.should_run(text):
+        await message.answer(
+            telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context)))
+            + _dialogue_status_text(dialogue_action.is_followup, dialogue_action.title)
+            + brain_status_text(brain_decision)
+            + _deep_research_status_text(),
+            parse_mode="HTML",
+        )
+
+        try:
+            research_result = await deep_research.run(
+                user_text=brain_search_text,
+                history=history,
+                mode=intent.mode,
+                extra_context=project_context,
+            )
+        except Exception:
+            logger.exception("Deep Research failed")
+            await message.answer(
+                "⚠️ <b>Deep Research не сработал</b>\n\n"
+                "<b>Что случилось</b>\n"
+                "Исследовательский контур упал во время обработки.\n\n"
+                "<b>Что сделать</b>\n"
+                "— проверь WEB_SEARCH_ENABLED и API-ключ поиска;\n"
+                "— попробуй запрос короче;\n"
+                "— посмотри логи приложения.",
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+            )
+            return
+
+        async with await connect_db(settings.database_path) as db:
+            user = await UserRepository(db).get_by_telegram_id(message.from_user.id)
+            if user:
+                await MessageRepository(db).add(
+                    user_id=int(user["id"]),
+                    role="assistant",
+                    content=research_result.answer,
+                )
+
+        chunks = split_long_text(research_result.answer)
+        for index, chunk in enumerate(chunks):
+            is_last = index == len(chunks) - 1
+            await message.answer(
+                telegram_html_from_ai_text(chunk),
+                reply_markup=feedback_keyboard() if is_last else None,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+        sources_html = deep_research.format_sources_html(research_result)
+        if sources_html:
+            await message.answer(
+                sources_html,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+        return
 
     if document_followup_intent.should_generate:
         await message.answer(
             telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context)))
             + _dialogue_status_text(dialogue_action.is_followup, dialogue_action.title)
             + _web_status_text(web_bundle)
+            + brain_status_text(brain_decision)
             + _document_status_text(document_followup_intent.human_title),
             parse_mode="HTML",
         )
@@ -551,16 +657,40 @@ async def _process_text_request(
     if personality_instruction:
         enriched_text = f"{enriched_text}\n\n{personality_instruction}"
 
+    brain_instruction = build_brain_instruction(brain_decision)
+    if brain_instruction:
+        enriched_text = f"{enriched_text}\n\n{brain_instruction}"
+
+    quality_instruction = build_quality_instruction(quality_decision)
+    if quality_instruction:
+        enriched_text = f"{enriched_text}\n\n{quality_instruction}"
+
     await message.answer(
         telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context)))
         + _dialogue_status_text(dialogue_action.is_followup, dialogue_action.title)
         + _web_status_text(web_bundle)
+        + brain_status_text(brain_decision)
         + personality_status_text(personality_decision),
         parse_mode="HTML",
     )
 
-    llm = LLMService(settings)
-    answer = await llm.complete(user_text=enriched_text, history=history, mode=intent.mode)
+    try:
+        llm = LLMService(settings)
+        answer = await llm.complete(user_text=enriched_text, history=history, mode=intent.mode)
+    except Exception:
+        logger.exception("Assistant LLM flow failed")
+        await message.answer(
+            "⚠️ <b>Не удалось собрать ответ</b>\n\n"
+            "<b>Что случилось</b>\n"
+            "Контур генерации ответа упал во время обработки.\n\n"
+            "<b>Что сделать</b>\n"
+            "— попробуй запрос короче;\n"
+            "— повтори позже;\n"
+            "— проверь LLM_API_KEY и логи приложения.",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+        return
 
     async with await connect_db(settings.database_path) as db:
         user = await UserRepository(db).get_by_telegram_id(message.from_user.id)
@@ -586,7 +716,6 @@ async def _process_text_request(
             parse_mode="HTML",
             disable_web_page_preview=True,
         )
-
 
 
 async def _handle_direct_document_followup(
