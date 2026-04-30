@@ -105,6 +105,30 @@ CREATE INDEX IF NOT EXISTS idx_queue_status_id
 ON queue(status, id);
 
 
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    user_id INTEGER,
+    telegram_id INTEGER,
+    actor_username TEXT,
+    chat_id INTEGER,
+    target_type TEXT,
+    target_id TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_type_created
+ON audit_events(event_type, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_telegram_created
+ON audit_events(telegram_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_chat_created
+ON audit_events(chat_id, created_at);
+
 CREATE TABLE IF NOT EXISTS abuse_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -301,6 +325,36 @@ async def _run_migrations(db: aiosqlite.Connection) -> None:
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_abuse_events_reason_created "
         "ON abuse_events(reason, created_at)"
+    )
+
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            user_id INTEGER,
+            telegram_id INTEGER,
+            actor_username TEXT,
+            chat_id INTEGER,
+            target_type TEXT,
+            target_id TEXT,
+            metadata TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_type_created "
+        "ON audit_events(event_type, created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_telegram_created "
+        "ON audit_events(telegram_id, created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_events_chat_created "
+        "ON audit_events(chat_id, created_at)"
     )
 
     await db.commit()

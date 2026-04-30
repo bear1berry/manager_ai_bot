@@ -37,6 +37,8 @@ async def setup_bot_commands(bot: Bot) -> None:
         BotCommand(command="admin_backup", description="Статус backup"),
         BotCommand(command="admin_backup_now", description="Создать backup"),
         BotCommand(command="admin_backups", description="Список backup"),
+        BotCommand(command="admin_audit", description="Audit Log"),
+        BotCommand(command="admin_audit_user", description="Audit пользователя"),
         BotCommand(command="stats", description="Статистика продукта"),
         BotCommand(command="feedback", description="Оценки ответов"),
         BotCommand(command="payments", description="Платежи Stars"),

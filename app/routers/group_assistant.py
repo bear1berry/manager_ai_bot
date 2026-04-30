@@ -13,6 +13,7 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
 
 from app.config import get_settings
+from app.services.audit import safe_record_audit_event
 from app.services.abuse import check_abuse_guard, choose_abuse_feature
 from app.services.brain import (
     brain_status_text,
@@ -850,6 +851,17 @@ async def group_on_handler(message: Message, bot: Bot) -> None:
             return
 
         await _set_group_memory_enabled(db, message, enabled=True)
+        await safe_record_audit_event(
+            db=db,
+            event_type="group.memory.enabled",
+            user_id=user_db_id,
+            telegram_id=message.from_user.id if message.from_user else None,
+            actor_username=message.from_user.username if message.from_user else None,
+            chat_id=message.chat.id,
+            target_type="group",
+            target_id=message.chat.id,
+            metadata={"chat_title": message.chat.title},
+        )
 
     await message.answer(
         "✅ <b>Память группы включена</b>\n\n"
@@ -879,6 +891,16 @@ async def group_off_handler(message: Message, bot: Bot) -> None:
 
     async with await connect_db(settings.database_path) as db:
         await _set_group_memory_enabled(db, message, enabled=False)
+        await safe_record_audit_event(
+            db=db,
+            event_type="group.memory.disabled",
+            telegram_id=message.from_user.id if message.from_user else None,
+            actor_username=message.from_user.username if message.from_user else None,
+            chat_id=message.chat.id,
+            target_type="group",
+            target_id=message.chat.id,
+            metadata={"chat_title": message.chat.title},
+        )
 
     await message.answer(
         "⏸ <b>Память группы выключена</b>\n\n"

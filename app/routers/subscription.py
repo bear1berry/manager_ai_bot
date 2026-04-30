@@ -7,6 +7,7 @@ from aiogram import Bot, F, Router
 from aiogram.types import LabeledPrice, Message, PreCheckoutQuery
 
 from app.bot.keyboards import main_keyboard, subscription_keyboard
+from app.services.audit import safe_record_audit_event
 from app.config import get_settings
 from app.services.limits import plan_display_name
 from app.services.payments import (
@@ -213,6 +214,21 @@ async def successful_payment_handler(message: Message) -> None:
             plan=plan,
             plan_expires_at=expires_at,
         )
+        await safe_record_audit_event(
+            db=db,
+            event_type="payment.paid",
+            user_id=int(user["id"]),
+            telegram_id=message.from_user.id if message.from_user else None,
+            actor_username=message.from_user.username if message.from_user else None,
+            chat_id=message.chat.id,
+            target_type="payment",
+            target_id=payment["id"],
+            metadata={
+                "plan": plan,
+                "stars_amount": int(payment["stars_amount"]),
+                "expires_at": expires_at,
+            },
+        )
 
     await message.answer(
         payment_success_text(plan=plan, expires_at=expires_at),
@@ -280,6 +296,19 @@ async def admin_set_plan_handler(message: Message) -> None:
             telegram_id=int(telegram_id_raw),
             plan=plan,
             plan_expires_at=plan_expires_at,
+        )
+        await safe_record_audit_event(
+            db=db,
+            event_type="admin.setplan",
+            telegram_id=message.from_user.id if message.from_user else None,
+            actor_username=message.from_user.username if message.from_user else None,
+            chat_id=message.chat.id,
+            target_type="user",
+            target_id=telegram_id_raw,
+            metadata={
+                "new_plan": plan,
+                "plan_expires_at": plan_expires_at,
+            },
         )
 
     await message.answer(

@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from app.bot.keyboards import main_keyboard
+from app.services.audit import safe_record_audit_event
 from app.config import get_settings
 from app.services.privacy import (
     forget_result_text,
@@ -135,6 +136,16 @@ async def forget_confirm_handler(message: Message) -> None:
         return
 
     async with await connect_db(settings.database_path) as db:
+        await safe_record_audit_event(
+            db=db,
+            event_type="privacy.forget_confirm.requested",
+            telegram_id=message.from_user.id,
+            actor_username=message.from_user.username,
+            chat_id=message.chat.id,
+            target_type="user",
+            target_id=message.from_user.id,
+        )
+
         result = await forget_user_data(
             db,
             telegram_id=message.from_user.id,

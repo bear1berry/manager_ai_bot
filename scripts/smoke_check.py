@@ -28,6 +28,7 @@ MODULES = [
     "app.services.backup",
     "app.services.backup_scheduler",
     "app.services.privacy",
+    "app.services.audit",
     "app.routers.privacy",
     "app.services.llm",
     "app.services.documents",

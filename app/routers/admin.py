@@ -7,6 +7,14 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
 
 from app.bot.keyboards import main_keyboard
+from app.services.audit import (
+    audit_events_for_telegram_id,
+    audit_events_text,
+    audit_stats_24h,
+    audit_stats_text,
+    latest_audit_events,
+    safe_record_audit_event,
+)
 from app.services.backup import (
     backup_created_text,
     backup_list_text,
@@ -479,6 +487,21 @@ async def admin_backup_now_handler(message: Message) -> None:
 
     result = create_backup(settings=settings)
 
+    async with await connect_db(settings.database_path) as db:
+        await safe_record_audit_event(
+            db=db,
+            event_type="backup.created",
+            telegram_id=message.from_user.id if message.from_user else None,
+            actor_username=message.from_user.username if message.from_user else None,
+            chat_id=message.chat.id,
+            target_type="backup",
+            metadata={
+                "created": [item.path.name for item in result.created],
+                "skipped": result.skipped,
+                "deleted": [path.name for path in result.deleted],
+            },
+        )
+
     await message.answer(
         backup_created_text(result),
         reply_markup=main_keyboard(),
@@ -491,3 +514,56 @@ async def admin_backup_now_handler(message: Message) -> None:
             FSInputFile(path),
             caption=f"💾 Backup: {path.name}",
         )
+
+
+
+@router.message(Command("admin_audit"))
+async def admin_audit_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        rows = await audit_stats_24h(db)
+        events = await latest_audit_events(db, limit=15)
+
+    await message.answer(
+        "📋 <b>Audit Log</b>\n\n"
+        "<b>События за 24 часа</b>\n"
+        f"{audit_stats_text(rows)}\n\n"
+        f"{audit_events_text(events, title='Последние события')}",
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+@router.message(Command("admin_audit_user"))
+async def admin_audit_user_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) != 2 or not parts[1].strip().isdigit():
+        await message.answer(
+            "Формат:\n<code>/admin_audit_user telegram_id</code>",
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    telegram_id = int(parts[1].strip())
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        events = await audit_events_for_telegram_id(db, telegram_id=telegram_id, limit=25)
+
+    await message.answer(
+        audit_events_text(events, title=f"Audit пользователя {telegram_id}"),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
