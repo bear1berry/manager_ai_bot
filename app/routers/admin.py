@@ -7,6 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
 
 from app.bot.keyboards import main_keyboard
+from app.services.observability import build_admin_status_text
 from app.services.audit import (
     audit_events_for_telegram_id,
     audit_events_text,
@@ -563,6 +564,26 @@ async def admin_audit_user_handler(message: Message) -> None:
 
     await message.answer(
         audit_events_text(events, title=f"Audit пользователя {telegram_id}"),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+
+@router.message(Command("admin_status"))
+async def admin_status_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        status_text = await build_admin_status_text(db=db, settings=settings)
+
+    await message.answer(
+        status_text,
         reply_markup=main_keyboard(),
         parse_mode="HTML",
         disable_web_page_preview=True,
