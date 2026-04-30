@@ -25,6 +25,7 @@ MODULES = [
     "app.services.web_search",
     "app.services.security",
     "app.services.abuse",
+    "app.services.backup",
     "app.services.llm",
     "app.services.documents",
 ]
@@ -87,7 +88,7 @@ def check_env() -> bool:
 
 
 def check_dirs() -> bool:
-    for dirname in ["data", "exports", "logs"]:
+    for dirname in ["data", "exports", "logs", "backups"]:
         path = ROOT / dirname
         path.mkdir(parents=True, exist_ok=True)
         _ok(f"dir {dirname}")

@@ -4,9 +4,16 @@ import html
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import FSInputFile, Message
 
 from app.bot.keyboards import main_keyboard
+from app.services.backup import (
+    backup_created_text,
+    backup_list_text,
+    backup_status_text,
+    create_backup,
+    files_safe_to_send,
+)
 from app.config import get_settings
 from app.services.diagnostics import run_diagnostics
 from app.services.limits import plan_display_name
@@ -422,3 +429,65 @@ async def admin_abuse_handler(message: Message) -> None:
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
+
+
+
+@router.message(Command("admin_backup"))
+async def admin_backup_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    await message.answer(
+        backup_status_text(settings),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+@router.message(Command("admin_backups"))
+async def admin_backups_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    await message.answer(
+        backup_list_text(limit=15),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+@router.message(Command("admin_backup_now"))
+async def admin_backup_now_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    await message.answer(
+        "💾 <b>Создаю backup</b>\n\n"
+        "Собираю SQLite и exports. Если файлы не превысят лимит Telegram — отправлю их ниже.",
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+    )
+
+    result = create_backup(settings=settings)
+
+    await message.answer(
+        backup_created_text(result),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+    for path in files_safe_to_send(result):
+        await message.answer_document(
+            FSInputFile(path),
+            caption=f"💾 Backup: {path.name}",
+        )
