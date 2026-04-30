@@ -13,6 +13,7 @@ from app.config import Settings
 from app.services.limits import get_plan_limits, plan_display_name
 from app.services.miniapp_auth import extract_user_from_init_data, verify_telegram_init_data
 from app.services.payments import format_plan_expiry
+from app.services.security import security_headers
 from app.services.subscription_copy import (
     locked_features,
     plan_badge,
@@ -35,12 +36,14 @@ def _cors_headers(settings: Settings) -> dict[str, str]:
     elif origins:
         allow_origin = origins[0]
 
-    return {
+    headers = {
         "Access-Control-Allow-Origin": allow_origin,
         "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Telegram-Init-Data",
         "Access-Control-Allow-Methods": "GET, OPTIONS",
         "Access-Control-Max-Age": "86400",
     }
+    headers.update(security_headers(settings))
+    return headers
 
 
 def _json_response(data: dict[str, Any], settings: Settings, status: int = 200) -> web.Response:
@@ -565,6 +568,7 @@ async def _latest_documents(db, user_id: int, limit: int) -> list[dict[str, Any]
                 "title": str(row["title"]),
                 "status": str(row["status"]),
                 "status_label": "Готов" if str(row["status"]) == "created" else str(row["status"]),
+                "group_chat_id": int(row["group_chat_id"]) if "group_chat_id" in row.keys() and row["group_chat_id"] is not None else None,
                 "has_docx": has_docx,
                 "has_pdf": has_pdf,
                 "docx_size_bytes": docx_size,
@@ -583,7 +587,104 @@ async def _latest_documents(db, user_id: int, limit: int) -> list[dict[str, Any]
 
 
 
+async def _latest_group_documents(
+    db,
+    chat_id: int,
+    user_id: int,
+    is_admin: bool,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    if is_admin:
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                group_chat_id,
+                doc_type,
+                title,
+                docx_path,
+                pdf_path,
+                docx_size_bytes,
+                pdf_size_bytes,
+                status,
+                created_at,
+                updated_at
+            FROM documents
+            WHERE group_chat_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (chat_id, limit),
+        )
+    else:
+        cursor = await db.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                group_chat_id,
+                doc_type,
+                title,
+                docx_path,
+                pdf_path,
+                docx_size_bytes,
+                pdf_size_bytes,
+                status,
+                created_at,
+                updated_at
+            FROM documents
+            WHERE group_chat_id = ?
+              AND user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (chat_id, user_id, limit),
+        )
+
+    rows = await cursor.fetchall()
+    result: list[dict[str, Any]] = []
+
+    for row in rows:
+        has_docx = bool(row["docx_path"])
+        has_pdf = bool(row["pdf_path"])
+        docx_size = int(row["docx_size_bytes"] or 0)
+        pdf_size = int(row["pdf_size_bytes"] or 0)
+
+        result.append(
+            {
+                "id": int(row["id"]),
+                "user_id": int(row["user_id"]),
+                "group_chat_id": int(row["group_chat_id"]) if row["group_chat_id"] is not None else None,
+                "doc_type": str(row["doc_type"]),
+                "doc_type_label": _document_type_label(str(row["doc_type"])),
+                "title": str(row["title"]),
+                "status": str(row["status"]),
+                "status_label": "Готов" if str(row["status"]) == "created" else str(row["status"]),
+                "has_docx": has_docx,
+                "has_pdf": has_pdf,
+                "docx_size_bytes": docx_size,
+                "pdf_size_bytes": pdf_size,
+                "docx_size_text": _format_bytes(docx_size),
+                "pdf_size_text": _format_bytes(pdf_size),
+                "download_docx_url": f"/api/documents/{int(row['id'])}/download?format=docx" if has_docx else None,
+                "download_pdf_url": f"/api/documents/{int(row['id'])}/download?format=pdf" if has_pdf else None,
+                "created_at": row["created_at"],
+                "created_text": _format_date(row["created_at"]),
+                "updated_at": row["updated_at"],
+            }
+        )
+
+    return result
+
+
 async def _latest_groups(db, telegram_id: int, is_admin: bool, limit: int) -> list[dict[str, Any]]:
+    user_id = await _count_scalar(
+        db,
+        "SELECT id FROM users WHERE telegram_id = ?",
+        (telegram_id,),
+    )
+
     if is_admin:
         cursor = await db.execute(
             """
@@ -653,10 +754,18 @@ async def _latest_groups(db, telegram_id: int, is_admin: bool, limit: int) -> li
         messages_total = int(row["messages_total"] or 0)
         messages_today = int(row["messages_today"] or 0)
         messages_last_hour = int(row["messages_last_hour"] or 0)
+        chat_id = int(row["chat_id"])
+        documents = await _latest_group_documents(
+            db=db,
+            chat_id=chat_id,
+            user_id=user_id,
+            is_admin=is_admin,
+            limit=4,
+        )
 
         result.append(
             {
-                "chat_id": int(row["chat_id"]),
+                "chat_id": chat_id,
                 "title": str(row["title"] or "Группа без названия"),
                 "username": row["username"],
                 "memory_enabled": memory_enabled,
@@ -664,6 +773,8 @@ async def _latest_groups(db, telegram_id: int, is_admin: bool, limit: int) -> li
                 "messages_total": messages_total,
                 "messages_today": messages_today,
                 "messages_last_hour": messages_last_hour,
+                "documents": documents,
+                "documents_total": len(documents),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
                 "updated_text": _format_date(row["updated_at"]),
@@ -671,6 +782,7 @@ async def _latest_groups(db, telegram_id: int, is_admin: bool, limit: int) -> li
         )
 
     return result
+
 
 def _demo_payload() -> dict[str, Any]:
     projects = [
@@ -752,6 +864,51 @@ def _demo_payload() -> dict[str, Any]:
             "messages_total": 48,
             "messages_today": 12,
             "messages_last_hour": 4,
+            "documents_total": 2,
+            "documents": [
+                {
+                    "id": 1,
+                    "user_id": 0,
+                    "group_chat_id": -1001111111111,
+                    "doc_type": "meeting_summary",
+                    "doc_type_label": "Резюме встречи",
+                    "title": "Протокол обсуждения запуска",
+                    "status": "created",
+                    "status_label": "Готов",
+                    "has_docx": True,
+                    "has_pdf": True,
+                    "docx_size_bytes": 38400,
+                    "pdf_size_bytes": 124000,
+                    "docx_size_text": "38 КБ",
+                    "pdf_size_text": "121 КБ",
+                    "download_docx_url": "/api/documents/1/download?format=docx",
+                    "download_pdf_url": "/api/documents/1/download?format=pdf",
+                    "created_at": "demo",
+                    "created_text": "сегодня",
+                    "updated_at": "demo",
+                },
+                {
+                    "id": 2,
+                    "user_id": 0,
+                    "group_chat_id": -1001111111111,
+                    "doc_type": "work_plan",
+                    "doc_type_label": "План работ",
+                    "title": "План действий по группе",
+                    "status": "created",
+                    "status_label": "Готов",
+                    "has_docx": True,
+                    "has_pdf": False,
+                    "docx_size_bytes": 42000,
+                    "pdf_size_bytes": 0,
+                    "docx_size_text": "41 КБ",
+                    "pdf_size_text": "—",
+                    "download_docx_url": "/api/documents/2/download?format=docx",
+                    "download_pdf_url": None,
+                    "created_at": "demo",
+                    "created_text": "сегодня",
+                    "updated_at": "demo",
+                },
+            ],
             "created_at": "demo",
             "updated_at": "demo",
             "updated_text": "сегодня",
@@ -765,6 +922,8 @@ def _demo_payload() -> dict[str, Any]:
             "messages_total": 9,
             "messages_today": 0,
             "messages_last_hour": 0,
+            "documents_total": 0,
+            "documents": [],
             "created_at": "demo",
             "updated_at": "demo",
             "updated_text": "вчера",

@@ -8,7 +8,9 @@ from aiogram.types import Message
 
 from app.bot.keyboards import main_keyboard
 from app.config import get_settings
+from app.services.diagnostics import run_diagnostics
 from app.services.limits import plan_display_name
+from app.services.security import admin_security_report
 from app.services.payments import format_plan_expiry
 from app.storage.db import connect_db
 from app.storage.repositories import AdminRepository, FeedbackRepository, PaymentRepository, UserRepository
@@ -297,4 +299,52 @@ async def payments_handler(message: Message) -> None:
         "\n".join(lines),
         reply_markup=main_keyboard(),
         parse_mode="HTML",
+    )
+
+
+
+@router.message(Command("admin_health"))
+async def admin_health_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+    items = run_diagnostics(settings)
+
+    lines = ["🛡 <b>Диагностика ядра</b>\n"]
+
+    for item in items:
+        icon = "✅" if item.ok else "⚠️"
+        lines.append(
+            f"{icon} <b>{html.escape(item.name)}</b>\n"
+            f"Значение: <code>{html.escape(str(item.value))}</code>"
+        )
+
+        if item.hint:
+            lines.append(f"Подсказка: <i>{html.escape(item.hint)}</i>")
+
+        lines.append("")
+
+    await message.answer(
+        "\n".join(lines).strip(),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+
+@router.message(Command("admin_security"))
+async def admin_security_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+    await message.answer(
+        admin_security_report(settings),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )

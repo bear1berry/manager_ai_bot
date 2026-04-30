@@ -23,6 +23,7 @@ MODULES = [
     "app.services.deep_research",
     "app.services.dialogue",
     "app.services.web_search",
+    "app.services.security",
     "app.services.llm",
     "app.services.documents",
 ]

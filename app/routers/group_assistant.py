@@ -26,6 +26,7 @@ from app.services.intents import IntentResult, detect_intent
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
 from app.services.quality import build_quality_instruction, decide_quality
+from app.services.security import check_group_admin_permission, group_admin_required_text
 from app.services.personality import (
     build_personality_instruction,
     decide_personality,
@@ -824,8 +825,13 @@ async def group_help_handler(message: Message, bot: Bot) -> None:
 
 
 @router.message(Command("group_on"), F.chat.type.in_(GROUP_CHAT_TYPES))
-async def group_on_handler(message: Message) -> None:
+async def group_on_handler(message: Message, bot: Bot) -> None:
     settings = get_settings()
+
+    permission = await check_group_admin_permission(bot=bot, message=message, settings=settings)
+    if not permission.allowed:
+        await message.answer(group_admin_required_text(permission.reason), parse_mode="HTML")
+        return
 
     async with await connect_db(settings.database_path) as db:
         user_repo = UserRepository(db)
@@ -862,8 +868,13 @@ async def group_on_handler(message: Message) -> None:
 
 
 @router.message(Command("group_off"), F.chat.type.in_(GROUP_CHAT_TYPES))
-async def group_off_handler(message: Message) -> None:
+async def group_off_handler(message: Message, bot: Bot) -> None:
     settings = get_settings()
+
+    permission = await check_group_admin_permission(bot=bot, message=message, settings=settings)
+    if not permission.allowed:
+        await message.answer(group_admin_required_text(permission.reason), parse_mode="HTML")
+        return
 
     async with await connect_db(settings.database_path) as db:
         await _set_group_memory_enabled(db, message, enabled=False)
@@ -920,8 +931,13 @@ async def group_status_handler(message: Message) -> None:
 
 
 @router.message(Command("group_clear"), F.chat.type.in_(GROUP_CHAT_TYPES))
-async def group_clear_handler(message: Message) -> None:
+async def group_clear_handler(message: Message, bot: Bot) -> None:
     settings = get_settings()
+
+    permission = await check_group_admin_permission(bot=bot, message=message, settings=settings)
+    if not permission.allowed:
+        await message.answer(group_admin_required_text(permission.reason), parse_mode="HTML")
+        return
 
     async with await connect_db(settings.database_path) as db:
         await _upsert_group_chat(db, message)
@@ -1251,6 +1267,7 @@ async def _handle_group_document_request(
                 docx_path=str(generated.docx_path),
                 pdf_path=str(generated.pdf_path) if generated.pdf_path else None,
                 status="created",
+                group_chat_id=message.chat.id,
             )
 
         await message.answer(
