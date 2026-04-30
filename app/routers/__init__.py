@@ -10,6 +10,7 @@ from app.routers import (
     feedback,
     group_assistant,
     miniapp,
+    privacy,
     profile,
     projects,
     start,
@@ -28,6 +29,7 @@ def setup_routers() -> Router:
     router.include_router(documents.router)
     router.include_router(demo.router)
     router.include_router(miniapp.router)
+    router.include_router(privacy.router)
     router.include_router(feedback.router)
 
     # Важно: групповой роутер должен быть до assistant.router,
