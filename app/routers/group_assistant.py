@@ -23,6 +23,12 @@ from app.services.brain import (
 )
 from app.services.documents import DocumentService
 from app.services.feature_gates import check_feature, is_deep_research_request
+from app.services.heavy_jobs import (
+    HEAVY_GROUP_DOCUMENT,
+    enqueue_heavy_job,
+    make_dedupe_key,
+    queued_text,
+)
 from app.services.deep_research import DeepResearchService
 from app.services.intents import IntentResult, detect_intent
 from app.services.limits import check_limit, limit_message
@@ -37,7 +43,7 @@ from app.services.personality import (
 from app.services.users import ensure_user
 from app.services.web_search import WebSearchBundle, WebSearchService
 from app.storage.db import connect_db
-from app.storage.repositories import DocumentRepository, UsageRepository, UserRepository
+from app.storage.repositories import DocumentRepository, QueueRepository, UsageRepository, UserRepository
 from app.utils.text import split_long_text, telegram_html_from_ai_text
 
 logger = logging.getLogger(__name__)

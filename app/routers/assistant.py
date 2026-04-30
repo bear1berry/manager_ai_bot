@@ -29,6 +29,13 @@ from app.services.dialogue import (
 )
 from app.services.documents import DocumentService
 from app.services.feature_gates import check_feature, is_deep_research_request
+from app.services.heavy_jobs import (
+    HEAVY_DEEP_RESEARCH,
+    HEAVY_DOCUMENT,
+    enqueue_heavy_job,
+    make_dedupe_key,
+    queued_text,
+)
 from app.services.intents import IntentResult, detect_intent, status_text
 from app.services.limits import check_limit, limit_message
 from app.services.llm import LLMService
@@ -606,63 +613,33 @@ async def _process_text_request(
 
     deep_research = DeepResearchService(settings)
     if deep_research.should_run(text):
-        await message.answer(
-            telegram_html_from_ai_text(status_text(intent, has_project_context=bool(project_context)))
-            + _dialogue_status_text(dialogue_action.is_followup, dialogue_action.title)
-            + brain_status_text(brain_decision)
-            + _deep_research_status_text(),
-            parse_mode="HTML",
-        )
-
-        try:
-            research_result = await deep_research.run(
-                user_text=brain_search_text,
-                history=history,
-                mode=intent.mode,
-                extra_context=project_context,
-            )
-        except Exception:
-            logger.exception("Deep Research failed")
-            await message.answer(
-                "⚠️ <b>Deep Research не сработал</b>\n\n"
-                "<b>Что случилось</b>\n"
-                "Исследовательский контур упал во время обработки.\n\n"
-                "<b>Что сделать</b>\n"
-                "— проверь WEB_SEARCH_ENABLED и API-ключ поиска;\n"
-                "— попробуй запрос короче;\n"
-                "— посмотри логи приложения.",
-                reply_markup=main_keyboard(),
-                parse_mode="HTML",
-            )
-            return
-
         async with await connect_db(settings.database_path) as db:
-            user = await UserRepository(db).get_by_telegram_id(message.from_user.id)
-            if user:
-                await MessageRepository(db).add(
-                    user_id=int(user["id"]),
-                    role="assistant",
-                    content=research_result.answer,
-                )
-
-        chunks = split_long_text(research_result.answer)
-        for index, chunk in enumerate(chunks):
-            is_last = index == len(chunks) - 1
-            await message.answer(
-                telegram_html_from_ai_text(chunk),
-                reply_markup=feedback_keyboard() if is_last else None,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
+            inserted = await enqueue_heavy_job(
+                queue_repo=QueueRepository(db),
+                kind=HEAVY_DEEP_RESEARCH,
+                payload={
+                    "chat_id": message.chat.id,
+                    "user_db_id": user_db_id,
+                    "telegram_id": message.from_user.id if message.from_user else None,
+                    "user_text": brain_search_text,
+                    "history": history,
+                    "mode": intent.mode,
+                    "extra_context": project_context,
+                },
+                dedupe_key=make_dedupe_key(
+                    HEAVY_DEEP_RESEARCH,
+                    message.from_user.id if message.from_user else None,
+                    brain_search_text,
+                    intent.mode,
+                ),
             )
 
-        sources_html = deep_research.format_sources_html(research_result)
-        if sources_html:
-            await message.answer(
-                sources_html,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-
+        await message.answer(
+            queued_text(HEAVY_DEEP_RESEARCH, inserted),
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
         return
 
     if document_followup_intent.should_generate:
@@ -675,14 +652,39 @@ async def _process_text_request(
             parse_mode="HTML",
         )
 
-        await _handle_direct_document_followup(
-            message=message,
-            user_db_id=user_db_id,
-            history=history,
+        source_text = build_document_source_from_dialogue(
             user_text=text,
+            history=history,
             document_intent=document_followup_intent,
             web_context=web_context,
             project_context=project_context,
+        )
+
+        async with await connect_db(settings.database_path) as db:
+            inserted = await enqueue_heavy_job(
+                queue_repo=QueueRepository(db),
+                kind=HEAVY_DOCUMENT,
+                payload={
+                    "chat_id": message.chat.id,
+                    "user_db_id": user_db_id,
+                    "telegram_id": message.from_user.id if message.from_user else None,
+                    "source_text": source_text,
+                    "doc_type": document_followup_intent.doc_type,
+                    "title": document_followup_intent.title,
+                },
+                dedupe_key=make_dedupe_key(
+                    HEAVY_DOCUMENT,
+                    message.from_user.id if message.from_user else None,
+                    document_followup_intent.doc_type,
+                    source_text[:1200],
+                ),
+            )
+
+        await message.answer(
+            queued_text(HEAVY_DOCUMENT, inserted),
+            reply_markup=main_keyboard(),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
         )
         return
 
