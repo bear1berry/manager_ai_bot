@@ -13,6 +13,7 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, Message
 
 from app.config import get_settings
+from app.services.abuse import check_abuse_guard, choose_abuse_feature
 from app.services.brain import (
     brain_status_text,
     build_brain_instruction,
@@ -1085,6 +1086,33 @@ async def group_text_router(message: Message, bot: Bot) -> None:
         if document_intent.should_generate and not group_document_gate.allowed:
             await message.answer(
                 group_document_gate.message,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+
+        abuse_feature = choose_abuse_feature(
+            is_group=True,
+            needs_web=brain_decision.needs_web,
+            needs_deep_research=is_deep_research_request(query),
+            needs_document=document_intent.should_generate,
+        )
+        abuse_result = await check_abuse_guard(
+            db=db,
+            user_id=user_db_id,
+            telegram_id=message.from_user.id if message.from_user else None,
+            chat_id=message.chat.id,
+            feature=abuse_feature,
+            text=query,
+            metadata={
+                "mode": intent.mode,
+                "source": "group",
+                "chat_title": message.chat.title,
+            },
+        )
+        if not abuse_result.allowed:
+            await message.answer(
+                abuse_result.message,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )

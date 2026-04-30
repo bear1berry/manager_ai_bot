@@ -104,6 +104,32 @@ CREATE TABLE IF NOT EXISTS queue (
 CREATE INDEX IF NOT EXISTS idx_queue_status_id
 ON queue(status, id);
 
+
+CREATE TABLE IF NOT EXISTS abuse_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    telegram_id INTEGER,
+    chat_id INTEGER,
+    feature TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    text_hash TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_abuse_events_feature_created
+ON abuse_events(feature, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_abuse_events_user_feature_created
+ON abuse_events(user_id, feature, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_abuse_events_chat_feature_created
+ON abuse_events(chat_id, feature, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_abuse_events_reason_created
+ON abuse_events(reason, created_at);
+
 CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -243,6 +269,39 @@ async def _run_migrations(db: aiosqlite.Connection) -> None:
                 "CREATE INDEX IF NOT EXISTS idx_documents_group_chat_created_at "
                 "ON documents(group_chat_id, created_at)"
             )
+
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS abuse_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            telegram_id INTEGER,
+            chat_id INTEGER,
+            feature TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            text_hash TEXT,
+            metadata TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_abuse_events_feature_created "
+        "ON abuse_events(feature, created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_abuse_events_user_feature_created "
+        "ON abuse_events(user_id, feature, created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_abuse_events_chat_feature_created "
+        "ON abuse_events(chat_id, feature, created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_abuse_events_reason_created "
+        "ON abuse_events(reason, created_at)"
+    )
 
     await db.commit()
 

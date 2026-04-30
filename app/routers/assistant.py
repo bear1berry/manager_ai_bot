@@ -11,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, Message
 
 from app.bot.keyboards import feedback_keyboard, main_keyboard, modes_keyboard
+from app.services.abuse import check_abuse_guard, choose_abuse_feature
 from app.config import get_settings
 from app.services.brain import (
     brain_status_text,
@@ -536,6 +537,33 @@ async def _process_text_request(
         if document_followup_intent.should_generate and not document_gate.allowed:
             await message.answer(
                 document_gate.message,
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+
+        abuse_feature = choose_abuse_feature(
+            is_group=False,
+            needs_web=brain_decision.needs_web,
+            needs_deep_research=is_deep_research_request(text),
+            needs_document=document_followup_intent.should_generate,
+        )
+        abuse_result = await check_abuse_guard(
+            db=db,
+            user_id=user_db_id,
+            telegram_id=message.from_user.id if message.from_user else None,
+            chat_id=message.chat.id,
+            feature=abuse_feature,
+            text=text,
+            metadata={
+                "mode": intent.mode,
+                "source": "assistant",
+            },
+        )
+        if not abuse_result.allowed:
+            await message.answer(
+                abuse_result.message,
                 reply_markup=main_keyboard(),
                 parse_mode="HTML",
                 disable_web_page_preview=True,

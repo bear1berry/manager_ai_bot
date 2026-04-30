@@ -24,6 +24,7 @@ MODULES = [
     "app.services.dialogue",
     "app.services.web_search",
     "app.services.security",
+    "app.services.abuse",
     "app.services.llm",
     "app.services.documents",
 ]

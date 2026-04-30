@@ -348,3 +348,77 @@ async def admin_security_handler(message: Message) -> None:
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
+
+
+
+@router.message(Command("admin_abuse"))
+async def admin_abuse_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        cursor = await db.execute(
+            """
+            SELECT feature, reason, COUNT(*) AS cnt
+            FROM abuse_events
+            WHERE created_at >= DATETIME('now', '-24 hours')
+            GROUP BY feature, reason
+            ORDER BY cnt DESC
+            LIMIT 20
+            """
+        )
+        stats = await cursor.fetchall()
+
+        cursor = await db.execute(
+            """
+            SELECT *
+            FROM abuse_events
+            WHERE reason != 'allowed'
+            ORDER BY created_at DESC, id DESC
+            LIMIT 10
+            """
+        )
+        latest = await cursor.fetchall()
+
+    lines = ["🛡 <b>Abuse Control</b>\n"]
+
+    if stats:
+        lines.append("<b>Последние 24 часа</b>")
+        for row in stats:
+            lines.append(
+                f"— <code>{html.escape(str(row['feature']))}</code> / "
+                f"<code>{html.escape(str(row['reason']))}</code>: "
+                f"<b>{row['cnt']}</b>"
+            )
+    else:
+        lines.append("<b>Последние 24 часа</b>\n— событий пока нет.")
+
+    lines.append("\n<b>Последние блокировки</b>")
+
+    if latest:
+        for row in latest:
+            metadata = str(row["metadata"] or "{}")
+            if len(metadata) > 180:
+                metadata = metadata[:180].rstrip() + "…"
+
+            lines.append(
+                f"\nID: <code>{row['id']}</code>\n"
+                f"Feature: <code>{html.escape(str(row['feature']))}</code>\n"
+                f"Reason: <code>{html.escape(str(row['reason']))}</code>\n"
+                f"User: <code>{row['telegram_id'] or '—'}</code>\n"
+                f"Chat: <code>{row['chat_id'] or '—'}</code>\n"
+                f"Meta: <code>{html.escape(metadata)}</code>\n"
+                f"At: <code>{row['created_at']}</code>"
+            )
+    else:
+        lines.append("— блокировок пока нет.")
+
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )

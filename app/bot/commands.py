@@ -30,6 +30,7 @@ async def setup_bot_commands(bot: Bot) -> None:
         BotCommand(command="admin", description="Админ-панель"),
         BotCommand(command="admin_health", description="Диагностика ядра"),
         BotCommand(command="admin_security", description="Отчёт безопасности"),
+        BotCommand(command="admin_abuse", description="Abuse Control"),
         BotCommand(command="stats", description="Статистика продукта"),
         BotCommand(command="feedback", description="Оценки ответов"),
         BotCommand(command="payments", description="Платежи Stars"),
