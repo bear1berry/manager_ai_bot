@@ -69,6 +69,7 @@ ON projects(user_id, status, updated_at);
 CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
+    group_chat_id INTEGER,
     doc_type TEXT NOT NULL,
     title TEXT NOT NULL,
     docx_path TEXT,
@@ -78,7 +79,8 @@ CREATE TABLE IF NOT EXISTS documents (
     status TEXT NOT NULL DEFAULT 'created',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (group_chat_id) REFERENCES group_chats(chat_id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_user_created_at
@@ -227,11 +229,20 @@ async def _run_migrations(db: aiosqlite.Connection) -> None:
             await db.execute("ALTER TABLE users ADD COLUMN plan_updated_at TEXT")
 
     if await _table_exists(db, "documents"):
+        if not await _column_exists(db, "documents", "group_chat_id"):
+            await db.execute("ALTER TABLE documents ADD COLUMN group_chat_id INTEGER")
+
         if not await _column_exists(db, "documents", "docx_size_bytes"):
             await db.execute("ALTER TABLE documents ADD COLUMN docx_size_bytes INTEGER NOT NULL DEFAULT 0")
 
         if not await _column_exists(db, "documents", "pdf_size_bytes"):
             await db.execute("ALTER TABLE documents ADD COLUMN pdf_size_bytes INTEGER NOT NULL DEFAULT 0")
+
+        if await _column_exists(db, "documents", "group_chat_id"):
+            await db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_documents_group_chat_created_at "
+                "ON documents(group_chat_id, created_at)"
+            )
 
     await db.commit()
 
