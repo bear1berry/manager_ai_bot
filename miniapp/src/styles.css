@@ -996,3 +996,294 @@ h2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.group-documents-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.group-documents-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.group-documents-head span {
+  color: rgba(247, 247, 251, 0.56);
+  font-size: 12px;
+}
+
+.group-documents-head strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+}
+
+.group-documents-empty {
+  color: rgba(247, 247, 251, 0.58);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.group-documents-empty strong {
+  color: rgba(247, 247, 251, 0.86);
+}
+
+.group-documents-list {
+  display: grid;
+  gap: 8px;
+}
+
+.group-document-mini-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.group-document-mini-card div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.group-document-mini-card span {
+  color: rgba(247, 247, 251, 0.46);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.group-document-mini-card strong {
+  color: rgba(247, 247, 251, 0.9);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.group-document-mini-card small {
+  color: rgba(247, 247, 251, 0.42);
+}
+
+.group-document-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.group-document-actions button {
+  flex: 1;
+  min-height: 34px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(247, 247, 251, 0.88);
+  font-weight: 700;
+}
+
+.group-document-actions button:disabled {
+  opacity: 0.38;
+}
+
+.group-document-error {
+  margin: 0;
+  color: rgba(255, 135, 135, 0.85);
+  font-size: 12px;
+}
+
+.admin-warning-panel,
+.admin-ok-panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 24px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.095);
+}
+
+.admin-warning-panel {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(255, 214, 102, 0.16), transparent 42%),
+    rgba(255, 255, 255, 0.055);
+}
+
+.admin-ok-panel {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(104, 242, 156, 0.14), transparent 42%),
+    rgba(255, 255, 255, 0.055);
+}
+
+.admin-warning-panel span,
+.admin-ok-panel span {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.admin-warning-panel ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: rgba(247, 247, 251, 0.72);
+}
+
+.admin-ok-panel p {
+  margin: 0;
+  color: rgba(247, 247, 251, 0.64);
+}
+
+.admin-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-card {
+  padding: 16px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 255, 255, 0.09), transparent 42%),
+    rgba(255, 255, 255, 0.052);
+  border: 1px solid rgba(255, 255, 255, 0.095);
+}
+
+.admin-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.admin-card-top span {
+  color: rgba(247, 247, 251, 0.46);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.admin-card-top h3 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  letter-spacing: -0.04em;
+}
+
+.admin-card-top button,
+.admin-actions button,
+.admin-kind-head button {
+  border: 0;
+  border-radius: 999px;
+  min-height: 34px;
+  padding: 0 14px;
+  color: rgba(247, 247, 251, 0.9);
+  background: rgba(255, 255, 255, 0.09);
+  font-weight: 700;
+}
+
+.admin-card-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-card-rows div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.065);
+}
+
+.admin-card-rows span {
+  color: rgba(247, 247, 251, 0.52);
+  font-size: 13px;
+}
+
+.admin-card-rows strong {
+  max-width: 58%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(247, 247, 251, 0.9);
+  font-size: 13px;
+}
+
+.admin-kind-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.085);
+}
+
+.admin-kind-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.admin-kind-head span {
+  font-weight: 800;
+}
+
+.admin-kind-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-kind-list div {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.admin-kind-list strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-kind-list span {
+  color: rgba(247, 247, 251, 0.52);
+  font-size: 12px;
+}
+
+.admin-kind-list b {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 28px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.admin-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+@media (min-width: 720px) {
+  .admin-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

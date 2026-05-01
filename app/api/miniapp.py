@@ -10,6 +10,8 @@ from urllib.parse import quote
 from aiohttp import web
 
 from app.config import Settings
+from app.services.backup import format_bytes as backup_format_bytes, list_backups
+from app.services.costs import llm_usage_stats_24h
 from app.services.limits import get_plan_limits, plan_display_name
 from app.services.miniapp_auth import extract_user_from_init_data, verify_telegram_init_data
 from app.services.payments import format_plan_expiry
@@ -200,10 +202,12 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
 
         latest_projects = await _latest_projects(db, user_id=user_id, limit=8)
         latest_documents = await _latest_documents(db, user_id=user_id, limit=8)
+        is_admin = settings.is_admin(tg_user.telegram_id, tg_user.username)
+
         latest_groups = await _latest_groups(
             db,
             telegram_id=tg_user.telegram_id,
-            is_admin=settings.is_admin(tg_user.telegram_id, tg_user.username),
+            is_admin=is_admin,
             limit=12,
         )
         groups_total = len(latest_groups)
@@ -259,6 +263,7 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
         "latest_documents": latest_documents,
         "groups": latest_groups,
         "latest_groups": latest_groups,
+        "admin_dashboard": await _admin_dashboard(db, settings) if is_admin else None,
     }
 
     return _json_response(payload, settings=settings)
@@ -784,6 +789,165 @@ async def _latest_groups(db, telegram_id: int, is_admin: bool, limit: int) -> li
     return result
 
 
+
+async def _admin_dashboard(db, settings: Settings) -> dict[str, Any]:
+    queue_by_status = await _queue_by_status(db)
+    queue_by_kind = await _queue_by_kind(db)
+    llm_stats = await llm_usage_stats_24h(db)
+
+    latest_backups = list_backups(limit=1)
+    latest_backup = None
+    if latest_backups:
+        item = latest_backups[0]
+        latest_backup = {
+            "name": item.path.name,
+            "kind": item.kind,
+            "size_text": backup_format_bytes(item.size_bytes),
+            "created_at": item.created_at,
+        }
+
+    payments_paid = await _count_scalar(db, "SELECT COUNT(*) FROM payments WHERE status = 'paid'")
+    payments_created = await _count_scalar(db, "SELECT COUNT(*) FROM payments WHERE status = 'created'")
+    payments_rejected = await _count_scalar(db, "SELECT COUNT(*) FROM payments WHERE status = 'rejected'")
+    stars_paid = await _count_scalar(db, "SELECT COALESCE(SUM(stars_amount), 0) FROM payments WHERE status = 'paid'")
+
+    users_total = await _count_scalar(db, "SELECT COUNT(*) FROM users")
+    users_today = await _count_scalar(db, "SELECT COUNT(*) FROM users WHERE DATE(created_at) = DATE('now')")
+    messages_today = await _count_scalar(db, "SELECT COUNT(*) FROM messages WHERE DATE(created_at) = DATE('now')")
+    documents_today = await _count_scalar(db, "SELECT COUNT(*) FROM documents WHERE DATE(created_at) = DATE('now')")
+
+    abuse_blocked_24h = await _count_scalar(
+        db,
+        "SELECT COUNT(*) FROM abuse_events WHERE reason != 'allowed' AND created_at >= DATETIME('now', '-24 hours')",
+    )
+    audit_events_24h = await _count_scalar(
+        db,
+        "SELECT COUNT(*) FROM audit_events WHERE created_at >= DATETIME('now', '-24 hours')",
+    )
+
+    provider = settings.web_search_provider
+    if provider == "tavily":
+        web_key = bool(settings.tavily_api_key)
+    elif provider == "serper":
+        web_key = bool(settings.serper_api_key)
+    elif provider == "brave":
+        web_key = bool(settings.brave_api_key)
+    else:
+        web_key = False
+
+    warnings: list[str] = []
+    if int(queue_by_status.get("failed", 0)) > 0:
+        warnings.append("В очереди есть failed-задачи.")
+    if int(queue_by_status.get("pending", 0)) >= 25:
+        warnings.append("Очередь pending растёт — проверь worker.")
+    if settings.web_search_enabled and not web_key:
+        warnings.append("Web Search включён, но ключ провайдера не найден.")
+    if latest_backup is None:
+        warnings.append("Backup ещё не создан.")
+    if abuse_blocked_24h >= 50:
+        warnings.append("Много abuse-блокировок за 24 часа.")
+
+    return {
+        "is_admin": True,
+        "system": {
+            "app_name": settings.app_name,
+            "env": settings.env,
+            "miniapp_api": bool(settings.mini_app_api_enabled),
+            "miniapp_url": settings.mini_app_url,
+        },
+        "product": {
+            "users_total": users_total,
+            "users_today": users_today,
+            "messages_today": messages_today,
+            "documents_today": documents_today,
+        },
+        "queue": {
+            "by_status": queue_by_status,
+            "by_kind": queue_by_kind,
+        },
+        "worker": {
+            "concurrency": int(settings.worker_concurrency),
+            "heavy_concurrency": int(settings.worker_heavy_concurrency),
+            "poll_interval_seconds": float(settings.worker_poll_interval_seconds),
+            "max_attempts": int(settings.worker_max_attempts),
+        },
+        "llm": {
+            "requests_24h": int(llm_stats.get("requests", 0)),
+            "input_tokens_24h": int(llm_stats.get("input_tokens", 0)),
+            "output_tokens_24h": int(llm_stats.get("output_tokens", 0)),
+            "estimated_cost_usd_24h": float(llm_stats.get("estimated_cost_usd", 0.0)),
+            "statuses": llm_stats.get("statuses", {}),
+            "tiers": llm_stats.get("tiers", {}),
+        },
+        "payments": {
+            "paid": payments_paid,
+            "created": payments_created,
+            "rejected": payments_rejected,
+            "stars_paid": stars_paid,
+        },
+        "backup": {
+            "latest": latest_backup,
+        },
+        "abuse": {
+            "blocked_24h": abuse_blocked_24h,
+        },
+        "audit": {
+            "events_24h": audit_events_24h,
+        },
+        "web": {
+            "enabled": bool(settings.web_search_enabled),
+            "provider": provider,
+            "api_key": "set" if web_key else "missing",
+        },
+        "warnings": warnings,
+    }
+
+
+async def _queue_by_status(db) -> dict[str, int]:
+    cursor = await db.execute(
+        """
+        SELECT status, COUNT(*) AS cnt
+        FROM queue
+        GROUP BY status
+        """
+    )
+    rows = await cursor.fetchall()
+
+    result = {
+        "pending": 0,
+        "processing": 0,
+        "done": 0,
+        "failed": 0,
+    }
+
+    for row in rows:
+        result[str(row["status"])] = int(row["cnt"] or 0)
+
+    return result
+
+
+async def _queue_by_kind(db) -> list[dict[str, Any]]:
+    cursor = await db.execute(
+        """
+        SELECT kind, status, COUNT(*) AS cnt
+        FROM queue
+        GROUP BY kind, status
+        ORDER BY kind ASC, status ASC
+        """
+    )
+    rows = await cursor.fetchall()
+
+    return [
+        {
+            "kind": str(row["kind"]),
+            "status": str(row["status"]),
+            "count": int(row["cnt"] or 0),
+        }
+        for row in rows
+    ]
+
+
+
 def _demo_payload() -> dict[str, Any]:
     projects = [
         {
@@ -1002,6 +1166,7 @@ def _demo_payload() -> dict[str, Any]:
         "latest_documents": documents,
         "groups": groups,
         "latest_groups": groups,
+        "admin_dashboard": None,
     }
 
 

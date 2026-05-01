@@ -49,6 +49,70 @@ export type MiniAppGroup = {
   updated_text?: string;
 };
 
+export type MiniAppAdminDashboard = {
+  is_admin: boolean;
+  system: {
+    app_name: string;
+    env: string;
+    miniapp_api: boolean;
+    miniapp_url?: string | null;
+  };
+  product: {
+    users_total: number;
+    users_today: number;
+    messages_today: number;
+    documents_today: number;
+  };
+  queue: {
+    by_status: Record<string, number>;
+    by_kind: Array<{
+      kind: string;
+      status: string;
+      count: number;
+    }>;
+  };
+  worker: {
+    concurrency: number;
+    heavy_concurrency: number;
+    poll_interval_seconds: number;
+    max_attempts: number;
+  };
+  llm: {
+    requests_24h: number;
+    input_tokens_24h: number;
+    output_tokens_24h: number;
+    estimated_cost_usd_24h: number;
+    statuses: Record<string, number>;
+    tiers: Record<string, number>;
+  };
+  payments: {
+    paid: number;
+    created: number;
+    rejected: number;
+    stars_paid: number;
+  };
+  backup: {
+    latest?: {
+      name: string;
+      kind: string;
+      size_text: string;
+      created_at: string;
+    } | null;
+  };
+  abuse: {
+    blocked_24h: number;
+  };
+  audit: {
+    events_24h: number;
+  };
+  web: {
+    enabled: boolean;
+    provider: string;
+    api_key: string;
+  };
+  warnings: string[];
+};
+
 export type MiniAppData = {
   ok: boolean;
   demo?: boolean;
@@ -99,6 +163,7 @@ export type MiniAppData = {
   latest_documents?: MiniAppDocument[];
   groups?: MiniAppGroup[];
   latest_groups?: MiniAppGroup[];
+  admin_dashboard?: MiniAppAdminDashboard | null;
 };
 
 function apiBaseUrl(): string | null {

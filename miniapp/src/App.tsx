@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   downloadDocumentFile,
   loadMiniAppData,
+  type MiniAppAdminDashboard,
   type MiniAppData,
   type MiniAppDocument,
   type MiniAppGroup,
@@ -31,7 +32,7 @@ declare global {
   }
 }
 
-type TabKey = "home" | "projects" | "docs" | "groups" | "subscription" | "demo";
+type TabKey = "home" | "projects" | "docs" | "groups" | "subscription" | "admin" | "demo";
 type ApiStatus = "loading" | "live" | "demo" | "error";
 
 const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
@@ -158,6 +159,7 @@ const fallbackData: MiniAppData = {
       updated_at: "demo"
     }
   ],
+  admin_dashboard: null,
   groups: [
     {
       chat_id: -1001111111111,
@@ -168,6 +170,49 @@ const fallbackData: MiniAppData = {
       messages_total: 48,
       messages_today: 12,
       messages_last_hour: 4,
+      documents_total: 2,
+      documents: [
+        {
+          id: 1,
+          doc_type: "meeting_summary",
+          doc_type_label: "Резюме встречи",
+          title: "Протокол обсуждения запуска",
+          status: "created",
+          status_label: "Готов",
+          group_chat_id: -1001111111111,
+          has_docx: true,
+          has_pdf: true,
+          docx_size_bytes: 38400,
+          pdf_size_bytes: 124000,
+          docx_size_text: "38 КБ",
+          pdf_size_text: "121 КБ",
+          download_docx_url: "/api/documents/1/download?format=docx",
+          download_pdf_url: "/api/documents/1/download?format=pdf",
+          created_at: "demo",
+          created_text: "сегодня",
+          updated_at: "demo"
+        },
+        {
+          id: 2,
+          doc_type: "work_plan",
+          doc_type_label: "План работ",
+          title: "План действий по группе",
+          status: "created",
+          status_label: "Готов",
+          group_chat_id: -1001111111111,
+          has_docx: true,
+          has_pdf: false,
+          docx_size_bytes: 42000,
+          pdf_size_bytes: 0,
+          docx_size_text: "41 КБ",
+          pdf_size_text: "—",
+          download_docx_url: "/api/documents/2/download?format=docx",
+          download_pdf_url: null,
+          created_at: "demo",
+          created_text: "сегодня",
+          updated_at: "demo"
+        }
+      ],
       created_at: "demo",
       updated_at: "demo",
       updated_text: "сегодня"
@@ -181,6 +226,8 @@ const fallbackData: MiniAppData = {
       messages_total: 9,
       messages_today: 0,
       messages_last_hour: 0,
+      documents_total: 0,
+      documents: [],
       created_at: "demo",
       updated_at: "demo",
       updated_text: "вчера"
@@ -295,6 +342,19 @@ function App() {
   }, [telegramUser?.first_name, telegramUser?.username, webApp?.initData]);
 
   const firstName = data.user.first_name || telegramUser?.first_name || "Александр";
+  const availableTabs = useMemo(() => {
+    if (!data.admin_dashboard?.is_admin) {
+      return tabs;
+    }
+
+    const withoutAdmin = tabs.filter((tab) => tab.key !== "admin");
+    return [
+      ...withoutAdmin.slice(0, 5),
+      { key: "admin" as TabKey, label: "Admin", icon: "▣" },
+      ...withoutAdmin.slice(5)
+    ];
+  }, [data.admin_dashboard?.is_admin]);
+
 
   return (
     <main className="app-shell">
@@ -317,7 +377,7 @@ function App() {
       </section>
 
       <nav className="tabs" aria-label="Mini App navigation">
-        {tabs.map((tab) => (
+        {availableTabs.map((tab) => (
           <button
             key={tab.key}
             className={activeTab === tab.key ? "tab active" : "tab"}
@@ -336,8 +396,9 @@ function App() {
         {!loading && activeTab === "home" && <HomeScreen data={data} apiStatus={apiStatus} />}
         {!loading && activeTab === "projects" && <ProjectsScreen data={data} />}
         {!loading && activeTab === "docs" && <DocumentsScreen data={data} initData={webApp?.initData || ""} />}
-        {!loading && activeTab === "groups" && <GroupsScreen data={data} />}
+        {!loading && activeTab === "groups" && <GroupsScreen data={data} initData={webApp?.initData || ""} />}
         {!loading && activeTab === "subscription" && <SubscriptionScreen data={data} />}
+        {!loading && activeTab === "admin" && <AdminScreen dashboard={data.admin_dashboard || null} />}
         {!loading && activeTab === "demo" && <DemoScreen />}
       </section>
     </main>
@@ -493,7 +554,7 @@ function DocumentsScreen({ data, initData }: { data: MiniAppData; initData: stri
 }
 
 
-function GroupsScreen({ data }: { data: MiniAppData }) {
+function GroupsScreen({ data, initData }: { data: MiniAppData; initData: string }) {
   const groups = data.latest_groups || data.groups || [];
   const enabledCount = groups.filter((group) => group.memory_enabled).length;
   const todayMessages = groups.reduce((sum, group) => sum + (group.messages_today || 0), 0);
@@ -535,7 +596,7 @@ function GroupsScreen({ data }: { data: MiniAppData }) {
       ) : (
         <div className="group-grid">
           {groups.map((group) => (
-            <GroupCard key={group.chat_id} group={group} />
+            <GroupCard key={group.chat_id} group={group} initData={initData} />
           ))}
         </div>
       )}
@@ -543,9 +604,10 @@ function GroupsScreen({ data }: { data: MiniAppData }) {
   );
 }
 
-function GroupCard({ group }: { group: MiniAppGroup }) {
+function GroupCard({ group, initData }: { group: MiniAppGroup; initData: string }) {
   const updatedText = group.updated_text || group.updated_at || "—";
   const memoryClass = group.memory_enabled ? "group-memory enabled" : "group-memory disabled";
+  const documents = group.documents || [];
 
   return (
     <article className="group-card">
@@ -572,6 +634,25 @@ function GroupCard({ group }: { group: MiniAppGroup }) {
         </div>
       </div>
 
+      <div className="group-documents-block">
+        <div className="group-documents-head">
+          <span>Документы группы</span>
+          <strong>{documents.length}</strong>
+        </div>
+
+        {documents.length === 0 ? (
+          <div className="group-documents-empty">
+            Протоколов пока нет. В группе попроси: <strong>сделай протокол по переписке</strong>.
+          </div>
+        ) : (
+          <div className="group-documents-list">
+            {documents.map((document) => (
+              <GroupDocumentMiniCard key={document.id} document={document} initData={initData} />
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="group-hint">
         <span>Команды</span>
         <strong>/group_status · /group_on · /group_clear</strong>
@@ -585,6 +666,42 @@ function GroupCard({ group }: { group: MiniAppGroup }) {
           Документы
         </button>
       </div>
+    </article>
+  );
+}
+
+function GroupDocumentMiniCard({ document, initData }: { document: MiniAppDocument; initData: string }) {
+  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+
+  async function handleDownload(format: "docx" | "pdf") {
+    setStatus("loading");
+
+    try {
+      await downloadDocumentFile(document.id, format, initData, document.title);
+      setStatus("idle");
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  return (
+    <article className="group-document-mini-card">
+      <div>
+        <span>{document.doc_type_label}</span>
+        <strong>{document.title}</strong>
+        <small>{document.created_text}</small>
+      </div>
+
+      <div className="group-document-actions">
+        <button type="button" disabled={!document.has_docx || status === "loading"} onClick={() => handleDownload("docx")}>
+          DOCX
+        </button>
+        <button type="button" disabled={!document.has_pdf || status === "loading"} onClick={() => handleDownload("pdf")}>
+          PDF
+        </button>
+      </div>
+
+      {status === "error" && <p className="group-document-error">Не удалось скачать файл.</p>}
     </article>
   );
 }
@@ -699,6 +816,216 @@ function FormattedText({ text }: { text: string }) {
     </div>
   );
 }
+
+
+function AdminScreen({ dashboard }: { dashboard: MiniAppAdminDashboard | null }) {
+  if (!dashboard?.is_admin) {
+    return (
+      <EmptyState
+        icon="▣"
+        title="Admin недоступен"
+        text="Эта вкладка доступна только владельцам и администраторам продукта."
+        button="Открыть чат"
+        onClick={() => sendToBot("assistant")}
+      />
+    );
+  }
+
+  const queue = dashboard.queue.by_status;
+  const warnings = dashboard.warnings || [];
+
+  return (
+    <>
+      <div className="section-heading">
+        <span>▣</span>
+        <h2>Admin Dashboard</h2>
+      </div>
+
+      <p className="lead">
+        Центр управления продуктом: очередь, worker, LLM, платежи, backup, abuse и audit.
+      </p>
+
+      {warnings.length > 0 ? (
+        <section className="admin-warning-panel">
+          <span>⚠️ Зоны внимания</span>
+          <ul>
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </section>
+      ) : (
+        <section className="admin-ok-panel">
+          <span>✅ Система выглядит здоровой</span>
+          <p>Критичных предупреждений сейчас нет.</p>
+        </section>
+      )}
+
+      <div className="admin-grid">
+        <AdminCard
+          title="System"
+          accent="Состояние"
+          rows={[
+            ["App", dashboard.system.app_name],
+            ["Env", dashboard.system.env],
+            ["Mini App API", dashboard.system.miniapp_api ? "enabled" : "disabled"]
+          ]}
+          command="admin_status"
+        />
+
+        <AdminCard
+          title="Product"
+          accent="Активность"
+          rows={[
+            ["Users", String(dashboard.product.users_total)],
+            ["New today", String(dashboard.product.users_today)],
+            ["Messages today", String(dashboard.product.messages_today)],
+            ["Docs today", String(dashboard.product.documents_today)]
+          ]}
+          command="stats"
+        />
+
+        <AdminCard
+          title="Queue"
+          accent="Worker flow"
+          rows={[
+            ["Pending", String(queue.pending || 0)],
+            ["Processing", String(queue.processing || 0)],
+            ["Done", String(queue.done || 0)],
+            ["Failed", String(queue.failed || 0)]
+          ]}
+          command="queue_status"
+        />
+
+        <AdminCard
+          title="Worker"
+          accent="Parallelism"
+          rows={[
+            ["Slots", String(dashboard.worker.concurrency)],
+            ["Heavy slots", String(dashboard.worker.heavy_concurrency)],
+            ["Poll", `${dashboard.worker.poll_interval_seconds}s`],
+            ["Attempts", String(dashboard.worker.max_attempts)]
+          ]}
+          command="admin_status"
+        />
+
+        <AdminCard
+          title="LLM"
+          accent="Cost ledger"
+          rows={[
+            ["Requests 24h", String(dashboard.llm.requests_24h)],
+            ["Input tokens", String(dashboard.llm.input_tokens_24h)],
+            ["Output tokens", String(dashboard.llm.output_tokens_24h)],
+            ["Cost 24h", `$${dashboard.llm.estimated_cost_usd_24h.toFixed(6)}`]
+          ]}
+          command="admin_llm_usage"
+        />
+
+        <AdminCard
+          title="Payments"
+          accent="Stars"
+          rows={[
+            ["Paid", String(dashboard.payments.paid)],
+            ["Created", String(dashboard.payments.created)],
+            ["Rejected", String(dashboard.payments.rejected)],
+            ["Stars", String(dashboard.payments.stars_paid)]
+          ]}
+          command="payments"
+        />
+
+        <AdminCard
+          title="Backup"
+          accent="Recovery"
+          rows={[
+            ["Latest", dashboard.backup.latest?.name || "—"],
+            ["Kind", dashboard.backup.latest?.kind || "—"],
+            ["Size", dashboard.backup.latest?.size_text || "—"],
+            ["Created", dashboard.backup.latest?.created_at || "—"]
+          ]}
+          command="admin_backup"
+        />
+
+        <AdminCard
+          title="Security"
+          accent="Abuse / Audit"
+          rows={[
+            ["Abuse blocked 24h", String(dashboard.abuse.blocked_24h)],
+            ["Audit events 24h", String(dashboard.audit.events_24h)],
+            ["Web", dashboard.web.enabled ? "enabled" : "disabled"],
+            ["Web key", dashboard.web.api_key]
+          ]}
+          command="admin_security"
+        />
+      </div>
+
+      <section className="admin-kind-panel">
+        <div className="admin-kind-head">
+          <span>Queue by kind</span>
+          <button type="button" onClick={() => sendToBot("queue_failed")}>
+            Failed
+          </button>
+        </div>
+
+        {dashboard.queue.by_kind.length === 0 ? (
+          <p>Очередь пока пустая.</p>
+        ) : (
+          <div className="admin-kind-list">
+            {dashboard.queue.by_kind.map((item) => (
+              <div key={`${item.kind}-${item.status}`}>
+                <strong>{item.kind}</strong>
+                <span>{item.status}</span>
+                <b>{item.count}</b>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="admin-actions">
+        <button type="button" onClick={() => sendToBot("admin_status")}>/admin_status</button>
+        <button type="button" onClick={() => sendToBot("queue_status")}>/queue_status</button>
+        <button type="button" onClick={() => sendToBot("admin_backup_now")}>Backup now</button>
+        <button type="button" onClick={() => sendToBot("admin_audit")}>Audit</button>
+      </div>
+    </>
+  );
+}
+
+function AdminCard({
+  title,
+  accent,
+  rows,
+  command
+}: {
+  title: string;
+  accent: string;
+  rows: Array<[string, string]>;
+  command: string;
+}) {
+  return (
+    <article className="admin-card">
+      <div className="admin-card-top">
+        <div>
+          <span>{accent}</span>
+          <h3>{title}</h3>
+        </div>
+        <button type="button" onClick={() => sendToBot(command)}>
+          открыть
+        </button>
+      </div>
+
+      <div className="admin-card-rows">
+        {rows.map(([label, value]) => (
+          <div key={`${title}-${label}`}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
 
 function DemoScreen() {
   return (
