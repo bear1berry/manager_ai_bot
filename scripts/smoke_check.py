@@ -32,6 +32,7 @@ MODULES = [
     "app.services.observability",
     "app.services.costs",
     "app.services.heavy_jobs",
+    "app.services.queue_admin",
     "app.services.model_router",
     "app.routers.privacy",
     "app.services.llm",

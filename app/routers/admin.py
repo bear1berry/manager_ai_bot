@@ -29,6 +29,12 @@ from app.services.diagnostics import run_diagnostics
 from app.services.limits import plan_display_name
 from app.services.security import admin_security_report
 from app.services.payments import format_plan_expiry
+from app.services.queue_admin import (
+    cleanup_done_tasks,
+    queue_failed_text,
+    queue_status_text,
+    retry_failed_tasks,
+)
 from app.storage.db import connect_db
 from app.storage.repositories import AdminRepository, FeedbackRepository, PaymentRepository, UserRepository
 
@@ -63,7 +69,7 @@ async def admin_panel_handler(message: Message) -> None:
         "Доступные команды:\n\n"
         "— <code>/stats</code> — статистика продукта;\n"
         "— <code>/users</code> — последние пользователи;\n"
-        "— <code>/queues</code> — состояние очереди;\n"
+        "— <code>/queues</code> — состояние очереди;\n— <code>/queue_status</code> — расширенный пульт очереди;\n— <code>/queue_failed</code> — failed-задачи;\n— <code>/queue_retry_failed [kind]</code> — retry failed;\n— <code>/queue_cleanup_done [days]</code> — очистить done;\n"
         "— <code>/feedback</code> — последние оценки ответов;\n"
         "— <code>/payments</code> — последние платежи Stars;\n"
         "— <code>/setplan telegram_id free|pro|business|admin [days]</code> — сменить тариф.\n\n"
@@ -163,6 +169,7 @@ async def users_handler(message: Message) -> None:
 
 
 @router.message(Command("queues"))
+@router.message(Command("queue_status"))
 async def queues_handler(message: Message) -> None:
     if not _is_admin_message(message):
         await _deny(message)
@@ -171,36 +178,13 @@ async def queues_handler(message: Message) -> None:
     settings = get_settings()
 
     async with await connect_db(settings.database_path) as db:
-        admin_repo = AdminRepository(db)
-        stats = await admin_repo.queue_stats()
-        failed = await admin_repo.latest_failed_queue(limit=5)
-
-    text = (
-        "🧵 <b>Состояние очереди</b>\n\n"
-        f"— pending: <code>{stats.get('pending', 0)}</code>\n"
-        f"— processing: <code>{stats.get('processing', 0)}</code>\n"
-        f"— done: <code>{stats.get('done', 0)}</code>\n"
-        f"— failed: <code>{stats.get('failed', 0)}</code>\n"
-    )
-
-    if failed:
-        text += "\n⚠️ <b>Последние ошибки</b>\n\n"
-        for row in failed:
-            error = str(row["last_error"] or "без текста ошибки")
-            if len(error) > 300:
-                error = error[:300].rstrip() + "…"
-
-            text += (
-                f"ID: <code>{row['id']}</code>\n"
-                f"Тип: <code>{row['kind']}</code>\n"
-                f"Попытки: <code>{row['attempts']}</code>\n"
-                f"Ошибка: <code>{html.escape(error)}</code>\n\n"
-            )
+        text = await queue_status_text(db)
 
     await message.answer(
         text,
         reply_markup=main_keyboard(),
         parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -648,6 +632,107 @@ async def admin_llm_usage_handler(message: Message) -> None:
 
     await message.answer(
         "\n".join(lines),
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+
+@router.message(Command("queue_failed"))
+async def queue_failed_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        text = await queue_failed_text(db, limit=15)
+
+    await message.answer(
+        text,
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+@router.message(Command("queue_retry_failed"))
+async def queue_retry_failed_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    kind = parts[1].strip() if len(parts) == 2 and parts[1].strip() else None
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        result = await retry_failed_tasks(db, kind=kind)
+        await safe_record_audit_event(
+            db=db,
+            event_type="queue.retry_failed",
+            telegram_id=message.from_user.id if message.from_user else None,
+            actor_username=message.from_user.username if message.from_user else None,
+            chat_id=message.chat.id,
+            target_type="queue",
+            target_id=kind or "all",
+            metadata={
+                "kind": kind,
+                "affected": result.affected,
+            },
+        )
+
+    await message.answer(
+        result.message,
+        reply_markup=main_keyboard(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
+@router.message(Command("queue_cleanup_done"))
+async def queue_cleanup_done_handler(message: Message) -> None:
+    if not _is_admin_message(message):
+        await _deny(message)
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    days = 7
+
+    if len(parts) == 2:
+        raw_days = parts[1].strip()
+        if not raw_days.isdigit():
+            await message.answer(
+                "Формат:\n<code>/queue_cleanup_done 7</code>",
+                reply_markup=main_keyboard(),
+                parse_mode="HTML",
+            )
+            return
+        days = int(raw_days)
+
+    settings = get_settings()
+
+    async with await connect_db(settings.database_path) as db:
+        result = await cleanup_done_tasks(db, older_than_days=days)
+        await safe_record_audit_event(
+            db=db,
+            event_type="queue.cleanup_done",
+            telegram_id=message.from_user.id if message.from_user else None,
+            actor_username=message.from_user.username if message.from_user else None,
+            chat_id=message.chat.id,
+            target_type="queue",
+            target_id=f"done_older_than_{days}_days",
+            metadata={
+                "older_than_days": days,
+                "affected": result.affected,
+            },
+        )
+
+    await message.answer(
+        result.message,
         reply_markup=main_keyboard(),
         parse_mode="HTML",
         disable_web_page_preview=True,
