@@ -3,17 +3,19 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
 from app.config import Settings
-from app.services.documents import DocumentService
+from app.services.audit import safe_record_audit_event
 from app.services.deep_research import DeepResearchService
+from app.services.documents import DocumentService
 from app.services.heavy_jobs import HEAVY_DEEP_RESEARCH, HEAVY_DOCUMENT, HEAVY_GROUP_DOCUMENT
 from app.services.llm import LLMService
-from app.services.audit import safe_record_audit_event
 from app.services.speechkit import SpeechKitService
 from app.storage.db import connect_db
 from app.storage.repositories import DocumentRepository, MessageRepository, QueueRepository, UsageRepository
@@ -22,74 +24,162 @@ from app.utils.text import split_long_text, telegram_html_from_ai_text
 logger = logging.getLogger(__name__)
 
 
+HEAVY_TASK_KINDS = {
+    HEAVY_DEEP_RESEARCH,
+    HEAVY_DOCUMENT,
+    HEAVY_GROUP_DOCUMENT,
+}
+
+
 class QueueWorker:
     def __init__(
         self,
         bot: Bot,
         settings: Settings,
-        poll_interval_seconds: float = 2.0,
-        max_attempts: int = 3,
+        poll_interval_seconds: float | None = None,
+        max_attempts: int | None = None,
     ) -> None:
         self.bot = bot
         self.settings = settings
-        self.poll_interval_seconds = poll_interval_seconds
-        self.max_attempts = max_attempts
+
+        self.poll_interval_seconds = (
+            float(poll_interval_seconds)
+            if poll_interval_seconds is not None
+            else max(0.5, float(settings.worker_poll_interval_seconds))
+        )
+        self.max_attempts = (
+            int(max_attempts)
+            if max_attempts is not None
+            else max(1, int(settings.worker_max_attempts))
+        )
+
+        self.concurrency = max(1, int(settings.worker_concurrency))
+        self.heavy_concurrency = max(1, int(settings.worker_heavy_concurrency))
+
+        # Не даём heavy_concurrency быть выше общего пула.
+        self.heavy_concurrency = min(self.heavy_concurrency, self.concurrency)
+
         self._stop_event = asyncio.Event()
+        self._tasks: list[asyncio.Task] = []
+        self._heavy_semaphore = asyncio.Semaphore(self.heavy_concurrency)
 
     async def start(self) -> None:
-        logger.info("Queue worker started")
+        logger.info(
+            "Queue worker started: concurrency=%s heavy_concurrency=%s poll_interval=%s max_attempts=%s",
+            self.concurrency,
+            self.heavy_concurrency,
+            self.poll_interval_seconds,
+            self.max_attempts,
+        )
 
-        while not self._stop_event.is_set():
-            try:
-                await self._tick()
-            except Exception:
-                logger.exception("Queue worker tick failed")
-                await asyncio.sleep(self.poll_interval_seconds)
+        self._tasks = [
+            asyncio.create_task(
+                self._slot(slot_id=index + 1),
+                name=f"queue-worker-slot-{index + 1}",
+            )
+            for index in range(self.concurrency)
+        ]
 
-            await asyncio.sleep(self.poll_interval_seconds)
-
-        logger.info("Queue worker stopped")
+        try:
+            await self._stop_event.wait()
+        finally:
+            await self._cancel_slots()
+            logger.info("Queue worker stopped")
 
     async def stop(self) -> None:
         self._stop_event.set()
+        await self._cancel_slots()
 
-    async def _tick(self) -> None:
+    async def _cancel_slots(self) -> None:
+        if not self._tasks:
+            return
+
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+
+        for task in self._tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+
+        self._tasks = []
+
+    async def _slot(self, slot_id: int) -> None:
+        logger.info("Queue worker slot started: slot=%s", slot_id)
+
+        while not self._stop_event.is_set():
+            try:
+                processed = await self._tick(slot_id=slot_id)
+
+                if not processed:
+                    await asyncio.sleep(self.poll_interval_seconds)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Queue worker slot tick failed: slot=%s", slot_id)
+                await asyncio.sleep(self.poll_interval_seconds)
+
+        logger.info("Queue worker slot stopped: slot=%s", slot_id)
+
+    async def _tick(self, slot_id: int) -> bool:
         async with await connect_db(self.settings.database_path) as db:
             queue_repo = QueueRepository(db)
             row = await queue_repo.claim_next()
 
             if row is None:
-                return
+                return False
 
             queue_id = int(row["id"])
             kind = str(row["kind"])
             payload = queue_repo.parse_payload(row)
 
-            logger.info("Task claimed: id=%s kind=%s attempts=%s", queue_id, kind, row["attempts"])
+            logger.info(
+                "Task claimed: slot=%s id=%s kind=%s attempts=%s",
+                slot_id,
+                queue_id,
+                kind,
+                row["attempts"],
+            )
 
             try:
-                if kind == "voice_transcribe":
-                    await self._handle_voice(payload)
-                elif kind == HEAVY_DEEP_RESEARCH:
-                    await self._handle_deep_research(payload)
-                elif kind == HEAVY_DOCUMENT:
-                    await self._handle_document(payload, is_group=False)
-                elif kind == HEAVY_GROUP_DOCUMENT:
-                    await self._handle_document(payload, is_group=True)
+                if kind in HEAVY_TASK_KINDS:
+                    async with self._heavy_semaphore:
+                        await self._dispatch(kind=kind, payload=payload, slot_id=slot_id)
                 else:
-                    raise RuntimeError(f"Unknown task kind: {kind}")
+                    await self._dispatch(kind=kind, payload=payload, slot_id=slot_id)
 
                 await queue_repo.mark_done(queue_id)
-                logger.info("Task done: id=%s kind=%s", queue_id, kind)
+                logger.info("Task done: slot=%s id=%s kind=%s", slot_id, queue_id, kind)
             except Exception as exc:
-                logger.exception("Task failed: id=%s kind=%s", queue_id, kind)
+                logger.exception("Task failed: slot=%s id=%s kind=%s", slot_id, queue_id, kind)
                 await queue_repo.mark_failed_or_retry(
                     queue_id=queue_id,
                     error=str(exc),
                     max_attempts=self.max_attempts,
                 )
 
-    async def _handle_voice(self, payload: dict) -> None:
+        return True
+
+    async def _dispatch(self, *, kind: str, payload: dict[str, Any], slot_id: int) -> None:
+        if kind == "voice_transcribe":
+            await self._handle_voice(payload)
+            return
+
+        if kind == HEAVY_DEEP_RESEARCH:
+            await self._handle_deep_research(payload)
+            return
+
+        if kind == HEAVY_DOCUMENT:
+            await self._handle_document(payload, is_group=False)
+            return
+
+        if kind == HEAVY_GROUP_DOCUMENT:
+            await self._handle_document(payload, is_group=True)
+            return
+
+        raise RuntimeError(f"Unknown task kind: {kind}")
+
+    async def _handle_voice(self, payload: dict[str, Any]) -> None:
         chat_id = int(payload["chat_id"])
         user_db_id = int(payload["user_db_id"])
         file_path = Path(str(payload["file_path"]))
@@ -134,9 +224,7 @@ class QueueWorker:
             parse_mode="Markdown",
         )
 
-
-
-    async def _handle_deep_research(self, payload: dict) -> None:
+    async def _handle_deep_research(self, payload: dict[str, Any]) -> None:
         chat_id = int(payload["chat_id"])
         user_db_id = int(payload["user_db_id"])
         telegram_id = int(payload.get("telegram_id") or 0) or None
@@ -211,7 +299,7 @@ class QueueWorker:
                 )
             raise
 
-    async def _handle_document(self, payload: dict, is_group: bool) -> None:
+    async def _handle_document(self, payload: dict[str, Any], is_group: bool) -> None:
         chat_id = int(payload["chat_id"])
         user_db_id = int(payload["user_db_id"])
         telegram_id = int(payload.get("telegram_id") or 0) or None
@@ -262,7 +350,6 @@ class QueueWorker:
                         group_chat_id=int(group_chat_id) if group_chat_id is not None else None,
                     )
                 except TypeError:
-                    # Backward compatibility if local DocumentRepository has not yet accepted group_chat_id.
                     document_id = await document_repo.create(
                         user_id=user_db_id,
                         doc_type=doc_type,

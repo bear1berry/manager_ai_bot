@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     auto_backup_interval_hours: int = Field(default=24, alias="AUTO_BACKUP_INTERVAL_HOURS")
     auto_backup_keep_files: int = Field(default=30, alias="AUTO_BACKUP_KEEP_FILES")
     auto_backup_start_delay_seconds: int = Field(default=120, alias="AUTO_BACKUP_START_DELAY_SECONDS")
+    worker_concurrency: int = Field(default=1, alias="WORKER_CONCURRENCY")
+    worker_heavy_concurrency: int = Field(default=1, alias="WORKER_HEAVY_CONCURRENCY")
+    worker_poll_interval_seconds: float = Field(default=2.0, alias="WORKER_POLL_INTERVAL_SECONDS")
+    worker_max_attempts: int = Field(default=3, alias="WORKER_MAX_ATTEMPTS")
     pdf_font_path: str = Field(default="", alias="PDF_FONT_PATH")
 
     @property

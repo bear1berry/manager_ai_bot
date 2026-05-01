@@ -27,6 +27,7 @@ async def build_admin_status_text(db: aiosqlite.Connection, settings: Settings) 
     items.extend(_system_items(settings))
     items.extend(await _database_items(db))
     items.extend(await _queue_items(db))
+    items.extend(_worker_items(settings))
     items.extend(await _payment_items(db))
     items.extend(await _llm_items(db))
     items.extend(await _abuse_items(db))
@@ -177,6 +178,41 @@ async def _queue_items(db: aiosqlite.Connection) -> list[HealthItem]:
         ]
     except Exception as exc:
         return [HealthItem("QUEUE", False, str(exc)[:160])]
+
+
+
+def _worker_items(settings: Settings) -> list[HealthItem]:
+    concurrency = max(1, int(settings.worker_concurrency))
+    heavy_concurrency = max(1, int(settings.worker_heavy_concurrency))
+    poll_interval = float(settings.worker_poll_interval_seconds)
+    max_attempts = max(1, int(settings.worker_max_attempts))
+
+    return [
+        HealthItem(
+            name="WORKER_CONCURRENCY",
+            ok=concurrency <= 4,
+            value=str(concurrency),
+            hint="Для слабого сервера держи 1–2." if concurrency > 4 else "",
+        ),
+        HealthItem(
+            name="WORKER_HEAVY_CONCURRENCY",
+            ok=heavy_concurrency <= concurrency,
+            value=str(heavy_concurrency),
+            hint="Heavy concurrency не должен быть выше общего worker pool.",
+        ),
+        HealthItem(
+            name="WORKER_POLL_INTERVAL",
+            ok=poll_interval >= 0.5,
+            value=f"{poll_interval}s",
+            hint="Слишком частый polling может давить SQLite." if poll_interval < 0.5 else "",
+        ),
+        HealthItem(
+            name="WORKER_MAX_ATTEMPTS",
+            ok=1 <= max_attempts <= 10,
+            value=str(max_attempts),
+            hint="Слишком много retry может долго гонять битые задачи." if max_attempts > 10 else "",
+        ),
+    ]
 
 
 async def _payment_items(db: aiosqlite.Connection) -> list[HealthItem]:
@@ -379,6 +415,8 @@ def _group_for_item(name: str) -> str:
         return "База данных"
     if name.startswith("QUEUE"):
         return "Очередь"
+    if name.startswith("WORKER"):
+        return "Worker"
     if name.startswith(("PAYMENTS", "STARS")):
         return "Платежи"
     if name.startswith("LLM"):
