@@ -51,6 +51,13 @@ def security_headers(settings: Settings) -> dict[str, str]:
     if settings.mini_app_url.strip():
         allowed_connect.append(settings.mini_app_url.strip().rstrip("/"))
 
+    allowed_connect.extend(
+        [
+            "https://*.ngrok-free.dev",
+            "https://*.ngrok-free.app",
+        ]
+    )
+
     return {
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",

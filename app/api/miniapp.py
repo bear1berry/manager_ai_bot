@@ -29,32 +29,60 @@ from app.storage.repositories import DocumentRepository, UserRepository
 logger = logging.getLogger(__name__)
 
 
-def _cors_headers(settings: Settings) -> dict[str, str]:
-    origins = [item.strip().rstrip("/") for item in settings.mini_app_cors_origins.split(",") if item.strip()]
-    allow_origin = "*"
+def _cors_headers(settings: Settings, request: web.Request | None = None) -> dict[str, str]:
+    origins = [
+        item.strip().rstrip("/")
+        for item in settings.mini_app_cors_origins.split(",")
+        if item.strip()
+    ]
+
+    configured_origins = set(origins)
 
     if settings.mini_app_url.strip():
+        configured_origins.add(settings.mini_app_url.strip().rstrip("/"))
+
+    # Vercel production domain. Keep explicit for ngrok/local dev stability.
+    configured_origins.add("https://manager-ai-bot-wheat.vercel.app")
+
+    request_origin = ""
+    if request is not None:
+        request_origin = request.headers.get("Origin", "").strip().rstrip("/")
+
+    if request_origin and (request_origin in configured_origins or request_origin.endswith(".vercel.app")):
+        allow_origin = request_origin
+    elif settings.mini_app_url.strip():
         allow_origin = settings.mini_app_url.strip().rstrip("/")
-    elif origins:
-        allow_origin = origins[0]
+    elif configured_origins:
+        allow_origin = sorted(configured_origins)[0]
+    else:
+        allow_origin = "*"
 
     headers = {
         "Access-Control-Allow-Origin": allow_origin,
-        "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Telegram-Init-Data, ngrok-skip-browser-warning",
+        "Access-Control-Allow-Headers": (
+            "Authorization, Content-Type, X-Telegram-Init-Data, "
+            "ngrok-skip-browser-warning"
+        ),
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Max-Age": "86400",
+        "Vary": "Origin",
     }
     headers.update(security_headers(settings))
     return headers
 
 
-def _json_response(data: dict[str, Any], settings: Settings, status: int = 200) -> web.Response:
-    return web.json_response(data, status=status, headers=_cors_headers(settings))
+def _json_response(
+    data: dict[str, Any],
+    settings: Settings,
+    status: int = 200,
+    request: web.Request | None = None,
+) -> web.Response:
+    return web.json_response(data, status=status, headers=_cors_headers(settings, request=request))
 
 
 async def options_handler(request: web.Request) -> web.Response:
     settings: Settings = request.app["settings"]
-    return web.Response(status=204, headers=_cors_headers(settings))
+    return web.Response(status=204, headers=_cors_headers(settings, request=request))
 
 
 async def health_handler(request: web.Request) -> web.Response:
@@ -66,6 +94,7 @@ async def health_handler(request: web.Request) -> web.Response:
             "env": settings.env,
         },
         settings=settings,
+        request=request,
     )
 
 
@@ -266,7 +295,7 @@ async def miniapp_me_handler(request: web.Request) -> web.Response:
         "admin_dashboard": await _admin_dashboard(db, settings) if is_admin else None,
     }
 
-    return _json_response(payload, settings=settings)
+    return _json_response(payload, settings=settings, request=request)
 
 
 async def document_download_handler(request: web.Request) -> web.StreamResponse:
@@ -360,7 +389,7 @@ async def document_download_handler(request: web.Request) -> web.StreamResponse:
     )
 
     content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-    headers = _cors_headers(settings)
+    headers = _cors_headers(settings, request=request)
     headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
 
     return web.FileResponse(
