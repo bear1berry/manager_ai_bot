@@ -182,7 +182,8 @@ export async function loadMiniAppData(initData: string): Promise<MiniAppData | n
     method: "GET",
     headers: {
       Authorization: `tma ${initData}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "true"
     }
   });
 
@@ -208,7 +209,8 @@ export async function downloadDocumentFile(
   const response = await fetch(`${baseUrl}/api/documents/${documentId}/download?format=${format}`, {
     method: "GET",
     headers: {
-      Authorization: `tma ${initData}`
+      Authorization: `tma ${initData}`,
+      "ngrok-skip-browser-warning": "true"
     }
   });
 

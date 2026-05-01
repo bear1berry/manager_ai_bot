@@ -40,8 +40,8 @@ def _cors_headers(settings: Settings) -> dict[str, str]:
 
     headers = {
         "Access-Control-Allow-Origin": allow_origin,
-        "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Telegram-Init-Data",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Telegram-Init-Data, ngrok-skip-browser-warning",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Max-Age": "86400",
     }
     headers.update(security_headers(settings))
