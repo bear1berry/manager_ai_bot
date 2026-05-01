@@ -41,6 +41,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
   { key: "docs", label: "Документы", icon: "□" },
   { key: "groups", label: "Группы", icon: "◉" },
   { key: "subscription", label: "Подписка", icon: "◇" },
+  { key: "admin", label: "Admin", icon: "▣" },
   { key: "demo", label: "Демо", icon: "◎" }
 ];
 
@@ -344,15 +345,10 @@ function App() {
   const firstName = data.user.first_name || telegramUser?.first_name || "Александр";
   const availableTabs = useMemo(() => {
     if (!data.admin_dashboard?.is_admin) {
-      return tabs;
+      return tabs.filter((tab) => tab.key !== "admin");
     }
 
-    const withoutAdmin = tabs.filter((tab) => tab.key !== "admin");
-    return [
-      ...withoutAdmin.slice(0, 5),
-      { key: "admin" as TabKey, label: "Admin", icon: "▣" },
-      ...withoutAdmin.slice(5)
-    ];
+    return tabs;
   }, [data.admin_dashboard?.is_admin]);
 
 
